@@ -3,24 +3,27 @@ import json
 import psycopg
 import sys
 
+from collections import Counter
 from app.core.log_config import setup_logging
 from sentence_transformers import SentenceTransformer
 from app.core.config import MODEL_NAME, DATABASE_URL, CHUNKS_DIR
 from pgvector.psycopg import register_vector
+from app.core.results import FileResult
 
 logger = logging.getLogger(__name__)
 
 
 def embed_file(
     chunk_path: str, model: SentenceTransformer, batch_size: int, conn
-) -> None:
+) -> FileResult:
     """embed one chunk file into the DB. Idempotent per video_id, all-or-nothing."""
+
     with open(chunk_path, "r", encoding="utf-8") as f:
         chunks: list[dict] = json.load(f)
 
     if not chunks:
         logger.warning("Chunks %s is empty!", chunk_path)
-        return
+        return FileResult.EMPTY
 
     # from payload, not filename: idempotency key must survive a rename
     video_id = chunks[0]["video_id"]
@@ -34,7 +37,7 @@ def embed_file(
 
     if already_exists:
         logger.info("Embeddings for this file %s exists, skipping", video_id)
-        return
+        return FileResult.SKIPPED
 
     texts = [chunk["text"] for chunk in chunks]
     embeddings = model.encode(texts, batch_size=batch_size)
@@ -67,6 +70,8 @@ def embed_file(
                         embedding,
                     ),
                 )
+        logger.info("Embedded %d chunks: %s", len(chunks), video_id)
+        return FileResult.WRITTEN
 
 
 def main() -> None:
@@ -80,7 +85,8 @@ def main() -> None:
     batch_size = 8
     model = SentenceTransformer(MODEL_NAME)
 
-    ok = 0
+    counts = Counter()
+    failed = 0
     total = 0
 
     # autocommit=True so conn.transaction() is the only explicit boundary
@@ -92,11 +98,18 @@ def main() -> None:
 
             # error boundary per file: one bad file must not kill the run
             try:
-                embed_file(chunk_path, model, batch_size, conn)
-                ok += 1
+                counts[embed_file(chunk_path, model, batch_size, conn)] += 1
             except Exception as e:
+                failed += 1
                 logger.error("Embedding error %s: %s", chunk_path, e)
-    logger.info("Done: %d/%d", ok, total)
+    logger.info(
+        "Done: %d written, %d skipped, %d empty, %d failed (of %d)",
+        counts[FileResult.WRITTEN],
+        counts[FileResult.SKIPPED],
+        counts[FileResult.EMPTY],
+        failed,
+        total,
+    )
 
 
 if __name__ == "__main__":
