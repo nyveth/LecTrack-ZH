@@ -20,7 +20,7 @@ A transcription-first RAG pipeline: video → transcript → chunks → embeddin
 - Python, managed via [uv](https://github.com/astral-sh/uv)
 - PostgreSQL 18 with the pgvector extension
 - CUDA 12.4 and a GPU with ≥3 GB VRAM — required by `transcribe` only.
-  `embed` currently runs on CPU (see [Known limitations](#known-limitations)).
+  `embed` and `search` currently run on CPU (see [Known limitations](#known-limitations)).
 - ~2.5 GB of free disk for the BGE-M3 weights, plus network access on first run
 
 ## Setup
@@ -79,7 +79,7 @@ Connect as the application role and create the table:
 psql "postgresql://ragbot:your-password-here@localhost:5432/ragbot"
 ```
 
-````sql
+```sql
 CREATE TABLE embeddings (
     chunk_id          TEXT PRIMARY KEY,
     video_id          TEXT             NOT NULL,
@@ -92,7 +92,7 @@ CREATE TABLE embeddings (
 );
 
 CREATE INDEX ON embeddings (video_id);
-````
+```
 
 Notes on the schema:
 
@@ -110,18 +110,21 @@ Notes on the schema:
 ### 5. Configuration
 
 ```bash
-cp .env.example .env    
+cp .env.example .env
 ```
 
 `.env` is gitignored. Required variables:
 
-| Variable       | Example                                                | Notes                        |
-|----------------|--------------------------------------------------------|------------------------------|
-| `DATABASE_URL` | `postgresql://ragbot:password@localhost:5432/ragbot`   | read via `os.environ`        |
+| Variable       | Example                                              | Notes                 |
+|----------------|------------------------------------------------------|-----------------------|
+| `DATABASE_URL` | `postgresql://ragbot:password@localhost:5432/ragbot` | read via `os.environ` |
 
 `app/core/config.py` reads `DATABASE_URL` with `os.environ[...]`, not `.get()`:
 a missing variable raises `KeyError` at import time rather than failing later
 with an obscure connection error.
+
+Non-secret constants live in `app/core/config.py`, not in `.env`:
+`TARGET_TOKENS`, `OVERLAP_TOKENS`, `MODEL_NAME`, `TOP_K`.
 
 ### 6. Model weights
 
@@ -152,13 +155,14 @@ logs/errors.log     # ERROR and above; INFO goes to stdout only
 Run every stage from the repository root as a module:
 
 ```bash
-python3 -m app.ingestion.transcribe   # .mp4        → transcript JSON
-python3 -m app.ingestion.chunk        # transcript  → overlapping chunks JSON
-python3 -m app.ingestion.embed        # chunks      → pgvector rows
-# retrieval / API — not implemented yet
+python3 -m app.ingestion.transcribe        # .mp4        → transcript JSON
+python3 -m app.ingestion.chunk             # transcript  → overlapping chunks JSON
+python3 -m app.ingestion.embed             # chunks      → pgvector rows
+python3 -m app.retrieval.search "查询内容"   # query       → top-k ranked chunks
+# API — not implemented yet
 ```
 
-Every stage is idempotent and reports what it actually did:
+Every ingestion stage is idempotent and reports what it actually did:
 
 ```
 Done: 0 written, 2 skipped, 0 empty, 0 failed (of 2)
@@ -166,10 +170,10 @@ Done: 0 written, 2 skipped, 0 empty, 0 failed (of 2)
 
 Skip conditions differ by stage:
 
-| Stage      | Skips when                                    |
-|------------|-----------------------------------------------|
-| transcribe | the transcript file already exists            |
-| chunk      | the output is not older than the transcript   |
+| Stage      | Skips when                                       |
+|------------|--------------------------------------------------|
+| transcribe | the transcript file already exists               |
+| chunk      | the output is not older than the transcript      |
 | embed      | rows for that `video_id` already exist in the DB |
 
 `embed` writes one transaction per file with a single commit. The idempotency
@@ -177,22 +181,51 @@ check is a binary "are there rows for this `video_id`" — safe only because the
 write is all-or-nothing. Partial state would make the check skip that video
 forever, silently.
 
+Note that the completion marker differs by stage: for `transcribe` and `chunk`
+it is a file on disk, for `embed` it is rows in the table. Deleting the JSON
+artifacts does **not** invalidate the embeddings — see
+[Known limitations](#known-limitations).
+
 ## Retrieval
 
-Not implemented yet. Design decision recorded here because it shapes the schema:
+`search.py` embeds the query with the same model and the same call used for the
+corpus, then runs an exact scan:
 
-Search will run as an exact scan — `ORDER BY embedding <=> $query LIMIT k` with
-no vector index. On the current corpus size this is instant, and it guarantees
-perfect recall by construction.
+```sql
+SELECT chunk_id, video_id, text, chunk_start, chunk_end,
+       embedding <=> %s AS distance
+FROM embeddings
+ORDER BY distance
+LIMIT %s
+```
 
-An approximate index (HNSW or IVFFlat) trades recall for speed, and unlike a
-B-tree it changes the answer, not just the time. Before adding one, two things
-must exist: a fixed set of evaluation queries written *before* anyone has seen
-the index output, and a script comparing approximate results against exact ones
-(`SET LOCAL enable_indexscan = off`). Written afterwards, the queries get
-unconsciously fitted to what the index already finds.
+Decisions:
 
-Revisit trigger: corpus above ~500 chunks, or a pipeline run above 15 minutes.
+- **No vector index.** The scan is exact: recall is 1.0 by construction, and the
+  result is itself the ground truth an approximate index would have to be
+  measured against. An approximate index (HNSW or IVFFlat) trades recall for
+  speed, and unlike a B-tree it changes the answer, not just the time. On two
+  lectures IVFFlat would also produce a non-representative partitioning.
+  Revisit trigger: corpus above ~500 chunks, or a query above 15 minutes.
+- **Query comes from `sys.argv`, not `input()`.** `search()` takes a string and
+  does not know where it came from, so the same function serves a shell loop
+  over a query file and, later, a FastAPI endpoint.
+- **Distance is printed, not filtered.** `LIMIT k` returns rows for *any* query,
+  including nonsense — the database cannot answer "nothing found". Distance is
+  the only signal separating a hit from the best available garbage. No cutoff
+  threshold is applied because none has been calibrated yet.
+- **Zero rows means an empty table or the wrong database**, not "no matches".
+  The log message says so explicitly.
+- **Normalization is not passed as an argument.** BGE-M3 carries a `Normalize`
+  module in its `modules.json`, so its output is unit-length regardless of
+  `normalize_embeddings`. The source of truth is the model's `modules.json`, not
+  the `encode()` signature. Independently, `<=>` is cosine distance and divides
+  by both norms internally, so vector length cannot affect ranking here at all.
+
+Measuring the noise floor: run a query from an unrelated domain and read its
+distance. Anything at or above that value is a non-hit. This has to be redone
+whenever the corpus is rebuilt, since distances are not comparable across
+different transcripts.
 
 ## Project structure
 
@@ -200,7 +233,7 @@ Revisit trigger: corpus above ~500 chunks, or a pipeline run above 15 minutes.
 app/
   core/        # config.py (constants + .env), log_config.py, results.py (FileResult)
   ingestion/   # transcribe, chunk, embed
-  retrieval/   # pending
+  retrieval/   # search
   api/         # pending
 scripts/       # one-off measurement and snapshot helpers
 ```
@@ -210,27 +243,78 @@ root, never as a bare script path.
 
 ## Status
 
-| Stage      | State                                                                 |
-|------------|-----------------------------------------------------------------------|
-| transcribe | ✓ atomic writes, existence-based idempotency                          |
-| chunk      | ✓ sliding-window overlap, mtime-based cache invalidation              |
-| embed      | ✓ BGE-M3 → pgvector, one transaction per video, rollback verified     |
-| retrieval  | not started                                                            |
-| API        | not started                                                            |
+| Stage      | State                                                             |
+|------------|-------------------------------------------------------------------|
+| transcribe | ✓ atomic writes, existence-based idempotency                      |
+| chunk      | ✓ sliding-window overlap, mtime-based cache invalidation          |
+| embed      | ✓ BGE-M3 → pgvector, one transaction per video, rollback verified |
+| retrieval  | ✓ exact cosine scan, CLI entry point                              |
+| API        | not started                                                       |
 
 ## Known limitations
 
-- **`embed` runs on CPU.** The installed torch build has no CUDA support for
-  Pascal (GTX 1060, sm_61): PyTorch 2.8+ dropped it from the cu128/cu129 wheels.
-  Fixing this needs a cu126 build and possibly a torch downgrade. Deferred —
-  measured cost is ~1.4 s per chunk, acceptable at the current corpus size.
-- **`chunk` invalidation is mtime-only.** An edit that preserves mtime is missed,
-  and a change of chunking parameters is not detected at all — the transcripts
-  did not change, so nothing looks stale. Content- or config-hash invalidation
-  is the fix, not yet implemented.
-- **ASR quality on technical vocabulary.** whisper `small` mangles domain terms
-  and Latin abbreviations in Chinese lecture audio. General speech transcribes
-  well. Whether this actually breaks term-based retrieval is unverified.
+- **ASR mangles domain terminology, and a larger model does not fix it.**
+  On Chinese technical lecture audio, whisper substitutes homophones: the
+  correct term is replaced by a more frequent everyday word that sounds the
+  same. Measured on one lecture by counting term forms in the transcript
+  (`grep`, not retrieval — the hit/noise gap in cosine distance was 0.058, too
+  small to read an ASR change against):
+
+  | Model  | 管脚 + 引脚 (correct) | 广角 + 管角 (mangled) |
+  |--------|-----------------------|------------------------|
+  | small  | 36                    | 1                      |
+  | medium | 5                     | 28                     |
+
+  `medium` with `beam_size=5` was six times worse on the most frequent term of
+  the lecture, so the pipeline runs `small`. Hypothesis, unverified: the larger
+  multilingual model carries a stronger language prior and resolves homophones
+  toward common vocabulary. Scope: one lecture, one domain, one language — this
+  does not generalise to "medium is worse than small".
+
+  Some terms (e.g. 时序逻辑, the title term of the lecture) are mangled by both
+  models and are written in a third form not covered by the count, so the full
+  distortion list is unknown. Known fixes, none implemented: `initial_prompt`
+  with a term glossary, post-correction against a substitution table, or a
+  domain fine-tune.
+
+  Dense retrieval compensates in part — a query for a term absent from the
+  corpus still ranked the right chunk below the noise floor, because BGE-M3
+  encodes context rather than string overlap. Thematic queries work; queries
+  aimed at one exact term are the fragile case.
+
+- **`beam_size` is not isolated.** The comparison above is `small+beam5` against
+  `medium+beam5`. `small+beam1` was never measured, so the contribution of beam
+  search alone is unknown.
+
+- **Re-transcribing does not refresh the embeddings.** `embed` skips on the
+  existence of rows for a `video_id`, and `video_id` carries no information
+  about the ASR model or its parameters. Changing the transcription settings
+  rewrites the transcripts and the chunks, then `embed` reports `SKIPPED` and
+  leaves the old vectors in place — a green log over a stale database. Until
+  hash-based invalidation exists, `DELETE FROM embeddings;` before re-embedding.
+
+- **`chunk` invalidation is mtime-only.** An edit that preserves mtime is
+  missed, and a change of chunking parameters is not detected at all — the
+  transcripts did not change, so nothing looks stale.
+
+- **The last chunk of a file can be a pure duplicate.** If the final segment
+  pushes the buffer past the token target, the chunk is emitted and the tail
+  branch then emits the carried-over overlap as a chunk of its own, with no new
+  content. It occupies a slot in the top-k result.
+
+- **`TOP_K = 5` on a 10-chunk corpus returns half the database.** Ranking at
+  this scale is not informative; the numbers only become meaningful once the
+  corpus is substantially larger than `k`.
+
+- **No calibrated cutoff.** The noise floor is a per-corpus observation, not a
+  constant. A fixed set of evaluation queries, written *before* seeing any
+  output, is still to be built.
+
+- **`embed` and `search` run on CPU.** The installed torch build has no CUDA
+  support for Pascal (GTX 1060, sm_61): PyTorch 2.8+ dropped it from the
+  cu128/cu129 wheels. Fixing this needs a cu126 build and possibly a torch
+  downgrade. Deferred — measured cost is ~1.4 s per chunk, acceptable at the
+  current corpus size.
 
 ---
 
