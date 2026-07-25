@@ -1,0 +1,60 @@
+[
+    {
+        "concept": "pin_assignment",
+        "kind": "hit",
+        "expect_terms": [
+            "管脚",
+            "引脚"
+        ],
+        "queries": {
+            "zh": "管脚分配",
+            "ru": "Как настроить распределение контактов?",
+            "en": "How do I configure the pin assignment?"
+        }
+    },
+    {
+        "concept": "clock",
+        "kind": "hit",
+        "expect_terms": [
+            "时钟"
+        ],
+        "queries": {
+            "zh": "时钟信号是怎么产生的？",
+            "ru": "Как генерируется тактовый сигнал?",
+            "en": "How is the clock signal generated?"
+        }
+    },
+    {
+        "concept": "stroke",
+        "kind": "hit",
+        "expect_terms": [
+            "中风",
+            "感染"
+        ],
+        "queries": {
+            "zh": "是什么原因导致中风和感染？",
+            "ru": "Каковы основные причины возникновения инсульта и инфекций?",
+            "en": "What are the main causes of stroke and infections?"
+        }
+    },
+    {
+        "concept": "braised_pork",
+        "kind": "noise",
+        "expect_terms": [],
+        "queries": {
+            "zh": "红烧肉怎么做",
+            "ru": "Как приготовить правильную свинину в соевом соусе?",
+            "en": "What is the best recipe for braised pork?"
+        }
+    },
+    {
+        "concept": "black_hole",
+        "kind": "noise",
+        "expect_terms": [],
+        "queries": {
+            "zh": "黑洞的事件视界是什么？",
+            "ru": "Что такое горизонт событий черной дыры?",
+            "en": "What is the event horizon of a black hole?"
+        }
+    }
+]
