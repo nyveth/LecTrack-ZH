@@ -29,7 +29,7 @@ def transcribe_file(
 
     # lazy generator: corrupt-audio errors surface during iteration, not here
     segments, info = model.transcribe(
-        str(video_path), beam_size=1, language="zh", vad_filter=True
+        str(video_path), beam_size=5, language="zh", vad_filter=True
     )
 
     # ms precision is noise for retrieval
