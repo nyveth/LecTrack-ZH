@@ -124,7 +124,10 @@ a missing variable raises `KeyError` at import time rather than failing later
 with an obscure connection error.
 
 Non-secret constants live in `app/core/config.py`, not in `.env`:
-`TARGET_TOKENS`, `OVERLAP_TOKENS`, `MODEL_NAME`, `TOP_K`.
+`TARGET_TOKENS`, `OVERLAP_TOKENS`, `MODEL_NAME`, `TOP_K`, `DISTANCE_THRESHOLD`.
+
+`DISTANCE_THRESHOLD` is corpus-specific and is not a portable constant — see
+[Evaluation](#evaluation).
 
 ### 6. Model weights
 
@@ -158,9 +161,14 @@ Run every stage from the repository root as a module:
 python3 -m app.ingestion.transcribe        # .mp4        → transcript JSON
 python3 -m app.ingestion.chunk             # transcript  → overlapping chunks JSON
 python3 -m app.ingestion.embed             # chunks      → pgvector rows
-python3 -m app.retrieval.search "查询内容"   # query       → top-k ranked chunks
+python3 -m app.retrieval.search "查询内容"   # query       → ranked chunks above threshold
+python3 -m scripts.eval_queries            # query set   → measurement table
 # API — not implemented yet
 ```
+
+Module invocation (`-m`) is not cosmetic. Running a file by path puts its own
+directory first on `sys.path`, so `import app` fails from anything under
+`scripts/`.
 
 Every ingestion stage is idempotent and reports what it actually did:
 
@@ -204,28 +212,131 @@ Decisions:
 - **No vector index.** The scan is exact: recall is 1.0 by construction, and the
   result is itself the ground truth an approximate index would have to be
   measured against. An approximate index (HNSW or IVFFlat) trades recall for
-  speed, and unlike a B-tree it changes the answer, not just the time. On two
-  lectures IVFFlat would also produce a non-representative partitioning.
-  Revisit trigger: corpus above ~500 chunks, or a query above 15 minutes.
+  speed, and unlike a B-tree it changes the answer, not just the time. At the
+  current corpus size IVFFlat would also produce a non-representative
+  partitioning. Revisit trigger: corpus above ~500 chunks, or a query above
+  15 minutes.
 - **Query comes from `sys.argv`, not `input()`.** `search()` takes a string and
-  does not know where it came from, so the same function serves a shell loop
-  over a query file and, later, a FastAPI endpoint.
-- **Distance is printed, not filtered.** `LIMIT k` returns rows for *any* query,
-  including nonsense — the database cannot answer "nothing found". Distance is
-  the only signal separating a hit from the best available garbage. No cutoff
-  threshold is applied because none has been calibrated yet.
+  does not know where it came from, so the same function serves the evaluation
+  script and, later, a FastAPI endpoint.
+- **The cutoff is applied in `main()`, not inside `search()`.** `LIMIT k` returns
+  rows for *any* query, including nonsense — the database cannot answer "nothing
+  found", so distance is the only signal separating a hit from the best
+  available garbage. `search()` therefore returns everything and the caller
+  decides: `main()` filters at `DISTANCE_THRESHOLD`, while `eval_queries.py`
+  needs the raw distances. Filtering inside `search()` would blind the very
+  script that calibrates the threshold.
 - **Zero rows means an empty table or the wrong database**, not "no matches".
-  The log message says so explicitly.
+  A non-empty result where everything sits above the threshold is a different
+  event and gets a different message.
 - **Normalization is not passed as an argument.** BGE-M3 carries a `Normalize`
   module in its `modules.json`, so its output is unit-length regardless of
   `normalize_embeddings`. The source of truth is the model's `modules.json`, not
   the `encode()` signature. Independently, `<=>` is cosine distance and divides
   by both norms internally, so vector length cannot affect ranking here at all.
 
-Measuring the noise floor: run a query from an unrelated domain and read its
-distance. Anything at or above that value is a non-hit. This has to be redone
-whenever the corpus is rebuilt, since distances are not comparable across
-different transcripts.
+## Evaluation
+
+`tests/queries.json` is a fixed query set: 7 concepts × 3 languages = 21
+queries, 5 of them expected hits and 2 expected noise. It is written and
+committed **before** any output is inspected. Judging relevance after seeing
+results bends the criterion to fit them; a check that cannot fail is not a
+check.
+
+Each entry carries `expect_terms` — a domain term that must appear in the text
+of the retrieved chunk. This makes the check mechanical rather than editorial,
+which matters here because the corpus is in a language the author does not read.
+
+```bash
+python3 -m scripts.eval_queries
+```
+
+```
+concept          lang  kind      dist  top1  rank
+pin_assignment   zh    hit     0.3578  OK    1
+...
+braised_pork     zh    noise   0.6107  -     -
+```
+
+`dist` is the distance of the top-1 chunk, `top1` whether the expected term
+appeared in it, `rank` the position of the first chunk that contained the term.
+Noise entries have no expected answer, so only distance is read.
+
+### Calibrating the threshold
+
+The cutoff lives between the worst hit and the best noise. On the current corpus
+(29 chunks, 3 videos):
+
+| | worst hit | best noise | window |
+|---|---|---|---|
+| all languages | 0.5209 | 0.6000 | 0.079 |
+
+`DISTANCE_THRESHOLD = 0.55` sits inside that window. It is an observation about
+this corpus, not a constant: distances are not comparable across different
+transcripts, and the value must be re-measured whenever the corpus is rebuilt.
+
+### One threshold, not one per language
+
+An earlier measurement suggested the hit/noise gap differed by language
+(0.255 / 0.20 / 0.075) and that a single cutoff was therefore impossible. That
+result was an artifact: the noise queries were *different concepts* per
+language, so the difference in meaning was being counted as a difference in
+language. With each concept translated from a single formulation, the per-language
+windows come out comparable:
+
+| Language | worst hit | best noise | window |
+|----------|-----------|------------|--------|
+| zh       | 0.4720    | 0.6000     | 0.128  |
+| ru       | 0.5040    | 0.6090     | 0.105  |
+| en       | 0.5209    | 0.6330     | 0.112  |
+
+A query in Russian or English retrieves the correct Chinese chunk at rank 1;
+no translation layer is needed in front of the pipeline. Chinese queries score
+closest in all five hit concepts, which is expected for a Chinese corpus but is
+a five-sample observation, not a measured effect.
+
+Distances are not comparable *across* languages any more than across corpora:
+a hit at 0.52 in English and a hit at 0.35 in Chinese say nothing about relative
+quality. What is comparable is ranking — which `chunk_id` came back, and in what
+order.
+
+### Dense retrieval bridges mangled terminology
+
+ASR substitutes homophones for domain terms (see
+[Known limitations](#known-limitations)), so an expected term may be literally
+absent from the corpus. This was measured directly: a query containing the
+correct 计数器 against a corpus containing only the mangled 技术器, with no other
+phrase shared between query and target chunk, still returned the right chunk at
+rank 1 in all three languages. The cost of the substitution is visible as
+distance:
+
+| Language | query sharing a phrase with the chunk | isolated query | cost |
+|----------|---------------------------------------|----------------|------|
+| zh       | 0.4227                                | 0.4720         | +0.049 |
+| ru       | 0.4201                                | 0.5040         | +0.084 |
+| en       | 0.4196                                | 0.5209         | +0.101 |
+
+BGE-M3 encodes context rather than string overlap, so thematic queries survive
+mangled terminology. Queries aimed at one exact term are the fragile case, and
+they consume most of the threshold margin.
+
+### What the metric cannot do
+
+`expect_terms` is a string containment check, so it measures ASR and retrieval
+as a product and cannot separate the two. The `clock` entry fails on all three
+languages while its distances sit in hit range: the top-1 chunk is about
+dividing a clock signal into counters and is semantically correct, but the
+characters 时钟 never appear in it. That is a false negative of the metric, not
+a retrieval defect. The entry is kept in the set precisely because it documents
+the failure mode.
+
+Two derived rules:
+
+- Never put a phrase into a test query that appears verbatim in the target
+  chunk. The match will come from the literal overlap and the measurement stops
+  measuring meaning. This mistake was made and caught in the `counter` entry,
+  which is why `counter_isolated` exists alongside it.
+- Distance is not quality. Quality is which chunks came back and in what order.
 
 ## Project structure
 
@@ -235,7 +346,8 @@ app/
   ingestion/   # transcribe, chunk, embed
   retrieval/   # search
   api/         # pending
-scripts/       # one-off measurement and snapshot helpers
+scripts/       # measurement helpers: eval_queries, measure_chunk_lengths, snapshot
+tests/         # queries.json — the evaluation set. No test code yet.
 ```
 
 Absolute imports from `app`; every stage is invoked as a module from the repo
@@ -248,17 +360,19 @@ root, never as a bare script path.
 | transcribe | ✓ atomic writes, existence-based idempotency                      |
 | chunk      | ✓ sliding-window overlap, mtime-based cache invalidation          |
 | embed      | ✓ BGE-M3 → pgvector, one transaction per video, rollback verified |
-| retrieval  | ✓ exact cosine scan, CLI entry point                              |
+| retrieval  | ✓ exact cosine scan, calibrated cutoff, CLI entry point           |
+| evaluation | ✓ fixed multilingual query set, mechanical term check             |
 | API        | not started                                                       |
 
 ## Known limitations
 
 - **ASR mangles domain terminology, and a larger model does not fix it.**
   On Chinese technical lecture audio, whisper substitutes homophones: the
-  correct term is replaced by a more frequent everyday word that sounds the
-  same. Measured on one lecture by counting term forms in the transcript
-  (`grep`, not retrieval — the hit/noise gap in cosine distance was 0.058, too
-  small to read an ASR change against):
+  correct term is replaced by a more frequent everyday word, or by a
+  non-existent compound, that sounds identical. Measured on one lecture by
+  counting term forms in the transcript (`grep`, not retrieval — the hit/noise
+  gap in cosine distance was 0.058 at the time, too small to read an ASR change
+  against):
 
   | Model  | 管脚 + 引脚 (correct) | 广角 + 管角 (mangled) |
   |--------|-----------------------|------------------------|
@@ -271,16 +385,21 @@ root, never as a bare script path.
   toward common vocabulary. Scope: one lecture, one domain, one language — this
   does not generalise to "medium is worse than small".
 
-  Some terms (e.g. 时序逻辑, the title term of the lecture) are mangled by both
-  models and are written in a third form not covered by the count, so the full
-  distortion list is unknown. Known fixes, none implemented: `initial_prompt`
-  with a term glossary, post-correction against a substitution table, or a
-  domain fine-tune.
+  Known substitutions so far, all central to the domain:
 
-  Dense retrieval compensates in part — a query for a term absent from the
-  corpus still ranked the right chunk below the noise floor, because BGE-M3
-  encodes context rather than string overlap. Thematic queries work; queries
-  aimed at one exact term are the fragile case.
+  | Correct  | Produced | Meaning        |
+  |----------|----------|----------------|
+  | 计数器   | 技术器   | counter        |
+  | 波特率   | 波特绿   | baud rate      |
+  | 管脚     | 广角 / 管角 | pin         |
+  | 时序逻辑 | (a third form, uncounted) | sequential logic |
+
+  The full distortion list is unknown: terms scoring zero in both columns of the
+  count are being written in some form nobody looked for. Known fixes, none
+  implemented: `initial_prompt` with a term glossary, post-correction against a
+  substitution table, or a domain fine-tune. Priority is not raised, because
+  dense retrieval currently bridges the substitutions (see
+  [Evaluation](#evaluation)).
 
 - **`beam_size` is not isolated.** The comparison above is `small+beam5` against
   `medium+beam5`. `small+beam1` was never measured, so the contribution of beam
@@ -291,24 +410,34 @@ root, never as a bare script path.
   about the ASR model or its parameters. Changing the transcription settings
   rewrites the transcripts and the chunks, then `embed` reports `SKIPPED` and
   leaves the old vectors in place — a green log over a stale database. Until
-  hash-based invalidation exists, `DELETE FROM embeddings;` before re-embedding.
+  hash-based invalidation exists, `DELETE FROM embeddings WHERE video_id = '...'`
+  before re-embedding.
 
 - **`chunk` invalidation is mtime-only.** An edit that preserves mtime is
   missed, and a change of chunking parameters is not detected at all — the
   transcripts did not change, so nothing looks stale.
 
-- **The last chunk of a file can be a pure duplicate.** If the final segment
-  pushes the buffer past the token target, the chunk is emitted and the tail
-  branch then emits the carried-over overlap as a chunk of its own, with no new
-  content. It occupies a slot in the top-k result.
+- **The threshold margin is thin.** 0.55 sits 0.029 above the worst measured hit
+  and 0.050 below the best measured noise. One slightly harder query would push
+  a valid hit past the cutoff. The comment next to `DISTANCE_THRESHOLD` in
+  `config.py` still quotes the values from before `counter_isolated` was added
+  and understates how tight the window is.
 
-- **`TOP_K = 5` on a 10-chunk corpus returns half the database.** Ranking at
-  this scale is not informative; the numbers only become meaningful once the
-  corpus is substantially larger than `k`.
+- **The evaluation set is small and partly non-blind.** 2 noise concepts across
+  3 videos in 1.5 domains. `管脚分配` and `红烧肉怎么做` were both run in earlier
+  sessions, so they are not blind; they are kept because they are the only
+  anchor to pre-existing measurements. `pin_assignment` also uses a bare noun
+  phrase in Chinese against full questions in Russian and English, which is the
+  same formulation drift the rest of the set was cleaned of.
 
-- **No calibrated cutoff.** The noise floor is a per-corpus observation, not a
-  constant. A fixed set of evaluation queries, written *before* seeing any
-  output, is still to be built.
+- **`TOP_K = 5` on a 29-chunk corpus returns a sixth of the database.** Ranking
+  at this scale is weakly informative; the numbers only become meaningful once
+  the corpus is substantially larger than `k`.
+
+- **Retrieval output cannot be judged by eye.** Results come back in Chinese.
+  The `expect_terms` check makes pass/fail mechanical, but diagnosing *why* a
+  query failed still requires an intermediary. This is the open blocker for
+  analysing false positives at scale.
 
 - **`embed` and `search` run on CPU.** The installed torch build has no CUDA
   support for Pascal (GTX 1060, sm_61): PyTorch 2.8+ dropped it from the
