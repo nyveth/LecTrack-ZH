@@ -62,6 +62,7 @@ def chunk_transcript(
     buffer = []
     current_tokens = 0
 
+    # -1: below any real index, so a sub-target transcript still emits its tail
     last_emitted_idx = -1
 
     for idx, segment in enumerate(segments):
@@ -78,7 +79,9 @@ def chunk_transcript(
             overlap_sum = 0
             chunks.append(_build_chunk(video_id, buffer, segment_start_idx, idx))
 
+            # same value the chunk just emitted carries as segment_end_idx
             last_emitted_idx = idx
+
             # walk back from the end to collect the overlap tail
             for j in range(len(buffer) - 1, -1, -1):
                 overlap_sum += count_tokens(buffer[j][1]["text"], tokenizer=tokenizer)
@@ -89,7 +92,7 @@ def chunk_transcript(
             segment_start_idx = buffer[0][0]
             current_tokens = overlap_sum
 
-    # tail below the threshold becomes the last chunk of the lecture
+    # emit only if an uncovered segment is left; otherwise the tail is a subset
     if buffer and buffer[-1][0] > last_emitted_idx:
         chunks.append(_build_chunk(video_id, buffer, segment_start_idx, buffer[-1][0]))
 
