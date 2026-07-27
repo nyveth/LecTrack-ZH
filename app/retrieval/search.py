@@ -6,7 +6,7 @@ from psycopg.rows import dict_row
 from pgvector.psycopg import register_vector
 from sentence_transformers import SentenceTransformer
 from app.core.log_config import setup_logging
-from app.core.config import MODEL_NAME, TOP_K, DATABASE_URL
+from app.core.config import MODEL_NAME, TOP_K, DATABASE_URL, DISTANCE_THRESHOLD
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,16 @@ def main() -> None:
         logger.warning("No matches found for the query: %s", query)
         return
 
-    for rank, row in enumerate(results, 1):
+    filtered_results = [row for row in results if row["distance"] <= DISTANCE_THRESHOLD]
+
+    if not filtered_results:
+        logger.warning(
+            "Matches found, but all exceed the distance threshold of %s",
+            DISTANCE_THRESHOLD,
+        )
+        return
+
+    for rank, row in enumerate(filtered_results, 1):
         print(
             f"\n[{rank}] distance={row['distance']:.4f}  "
             f"{row['video_id']}  "

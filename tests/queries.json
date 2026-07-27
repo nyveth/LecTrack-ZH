@@ -56,5 +56,18 @@
             "ru": "Что такое горизонт событий черной дыры?",
             "en": "What is the event horizon of a black hole?"
         }
+    },
+    {
+        "concept": "counter",
+        "kind": "hit",
+        "expect_terms": [
+            "技术器",
+            "计数器"
+        ],
+        "queries": {
+            "zh": "计数器是如何产生最小时间单位的？",
+            "ru": "Как счётчик формирует минимальную единицу времени?",
+            "en": "How does the counter produce the minimum time unit?"
+        }
     }
 ]

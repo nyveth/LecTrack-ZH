@@ -14,3 +14,7 @@ OVERLAP_TOKENS = 64
 MODEL_NAME = "BAAI/bge-m3"
 DATABASE_URL = os.environ["DATABASE_URL"]
 TOP_K = 5
+
+# measured on a 29-chunk corpus: worst hit 0.4821, best noise 0.6000.
+# recalculate when the corpus changes - distances are not portable across corpora.
+DISTANCE_THRESHOLD = 0.55
