@@ -8,6 +8,7 @@ from app.core.config import BASE_DIR, DATABASE_URL, MODEL_NAME, TOP_K
 from app.retrieval.search import search
 
 QUERIES_PATH = BASE_DIR / "tests" / "queries.json"
+IDS_SHOWN = 3
 
 
 def first_match_rank(results: list[dict], expect_terms: list[str]) -> int | None:
@@ -30,6 +31,8 @@ def main() -> None:
         register_vector(conn)
 
         for entry in entries:
+            ids_by_lang: dict[str, list[str]] = {}
+
             for lang, query in entry["queries"].items():
                 if not query:
                     print(f"{entry['concept']:<16} {lang:<5} EMPTY QUERY")
@@ -41,6 +44,8 @@ def main() -> None:
                     continue
 
                 dist = results[0]["distance"]
+                ids = [row["chunk_id"] for row in results[:IDS_SHOWN]]
+                ids_by_lang[lang] = ids
 
                 # у шума правильного ответа нет - меряется только расстояние
                 if entry["kind"] == "noise":
@@ -54,6 +59,19 @@ def main() -> None:
                     f"{entry['concept']:<16} {lang:<5} {entry['kind']:<6} "
                     f"{dist:>7.4f}  {top1:<5} {rank}"
                 )
+                print(f"{'':<16} {'':<5} ids: {' '.join(ids)}")
+
+            # сравнение внутри концепта: база - язык корпуса
+            base = ids_by_lang.get("zh")
+            if base:
+                for lang, ids in ids_by_lang.items():
+                    if lang == "zh":
+                        continue
+                    overlap = len(set(base) & set(ids))
+                    order = "same" if ids == base else "diff"
+                    print(
+                        f"{'':<16} {lang:<5} vs zh: {overlap}/{len(base)}  order: {order}"
+                    )
 
 
 if __name__ == "__main__":
