@@ -11,9 +11,10 @@ A transcription-first RAG pipeline: video → transcript → chunks → embeddin
 | Embeddings    | BGE-M3 via sentence-transformers         |
 | Vector store  | pgvector on PostgreSQL 18                |
 | DB driver     | psycopg 3 (synchronous)                  |
-| API           | FastAPI — not implemented yet            |
+| API           | FastAPI + uvicorn                        |
 | Frontend      | Next.js — not implemented yet            |
 | Lint          | ruff                                     |
+| Tests         | pytest                                   |
 
 ## Requirements
 
@@ -163,7 +164,7 @@ python3 -m app.ingestion.chunk             # transcript  → overlapping chunks 
 python3 -m app.ingestion.embed             # chunks      → pgvector rows
 python3 -m app.retrieval.search "查询内容"   # query       → ranked chunks above threshold
 python3 -m scripts.eval_queries            # query set   → measurement table
-# API — not implemented yet
+uv run uvicorn app.api.main:app --reload   # HTTP        → JSON, filtered by threshold
 ```
 
 Module invocation (`-m`) is not cosmetic. Running a file by path puts its own
@@ -219,13 +220,13 @@ Decisions:
 - **Query comes from `sys.argv`, not `input()`.** `search()` takes a string and
   does not know where it came from, so the same function serves the evaluation
   script and, later, a FastAPI endpoint.
-- **The cutoff is applied in `main()`, not inside `search()`.** `LIMIT k` returns
-  rows for *any* query, including nonsense — the database cannot answer "nothing
-  found", so distance is the only signal separating a hit from the best
-  available garbage. `search()` therefore returns everything and the caller
-  decides: `main()` filters at `DISTANCE_THRESHOLD`, while `eval_queries.py`
-  needs the raw distances. Filtering inside `search()` would blind the very
-  script that calibrates the threshold.
+- **The cutoff is applied by the callers, not inside `search()`.** `LIMIT k`
+  returns rows for *any* query, including nonsense — the database cannot answer
+  "nothing found", so distance is the only signal separating a hit from the best
+  available garbage. `search()` therefore returns everything: `main()` and the
+  API endpoint filter at `DISTANCE_THRESHOLD`, while `eval_queries.py` needs the
+  raw distances. Filtering inside `search()` would blind the very script that
+  calibrates the threshold.
 - **Zero rows means an empty table or the wrong database**, not "no matches".
   A non-empty result where everything sits above the threshold is a different
   event and gets a different message.
@@ -234,6 +235,51 @@ Decisions:
   `normalize_embeddings`. The source of truth is the model's `modules.json`, not
   the `encode()` signature. Independently, `<=>` is cosine distance and divides
   by both norms internally, so vector length cannot affect ranking here at all.
+
+## API
+
+`app/api/main.py` exposes `search()` over HTTP. From the repository root:
+
+```bash
+uv run uvicorn app.api.main:app --reload
+```
+
+This is the one stage not invoked with `python3 -m`: uvicorn imports the module
+and needs the app object named. `app.api.main` is the same module path, `:app`
+is the variable inside it.
+
+Interactive docs at `http://127.0.0.1:8000/docs`, generated from the handler's
+type hints — no schema is written by hand. `--reload` re-imports the module on
+every file change, and the module loads 2.27 GB of weights at import, so drop
+the flag when not editing.
+
+| | |
+|---|---|
+| Route        | `GET /search` |
+| Query params | `query` (required), `top_k` (defaults to `TOP_K`) |
+| Response     | `200` + JSON array: `chunk_id`, `video_id`, `text`, `chunk_start`, `chunk_end`, `distance` |
+| No match     | `200` + `[]` |
+
+Decisions:
+
+- **The handler is a plain `def`, not `async def`.** FastAPI runs a plain `def`
+  in an external threadpool; an `async def` runs directly on the event loop.
+  Both calls inside the handler block — psycopg 3 is synchronous and
+  `model.encode()` is CPU-bound for seconds — so `async def` would stall every
+  concurrent request, which is worse than not being async at all. The defect is
+  invisible with a single user: it surfaces only on the second simultaneous
+  request.
+- **The model and the connection live at module level.** Module-level code runs
+  once per process, function-level code runs once per request. Loading 2.27 GB
+  of weights per request would make the endpoint unusable.
+- **`Depends` is not used.** Its payoff is substitutability under test, and
+  there are no API tests yet. It goes in when they exist, not before.
+- **The threshold is applied here, not in the client.** It is calibrated against
+  the corpus, so it belongs next to the data. A frontend holding `0.55` breaks
+  silently the day the corpus grows.
+- **An empty result is `200`, not `404`.** The search ran and matched nothing;
+  the endpoint exists. `404` would mean the route is missing. The client has to
+  distinguish "empty" from "failed" — that is honest work, unlike showing noise.
 
 ## Evaluation
 
@@ -345,7 +391,7 @@ app/
   core/        # config.py (constants + .env), log_config.py, results.py (FileResult)
   ingestion/   # transcribe, chunk, embed
   retrieval/   # search
-  api/         # pending
+   api/         # main.py — FastAPI app over search()
 scripts/       # measurement helpers: eval_queries, measure_chunk_lengths, snapshot
 tests/         # queries.json — the evaluation set. No test code yet.
 ```
@@ -362,7 +408,7 @@ root, never as a bare script path.
 | embed      | ✓ BGE-M3 → pgvector, one transaction per video, rollback verified |
 | retrieval  | ✓ exact cosine scan, calibrated cutoff, CLI entry point           |
 | evaluation | ✓ fixed multilingual query set, mechanical term check             |
-| API        | not started                                                       |
+| API        | ✓ GET /search, threshold applied, interactive docs                |
 
 ## Known limitations
 
@@ -444,6 +490,19 @@ root, never as a bare script path.
   cu128/cu129 wheels. Fixing this needs a cu126 build and possibly a torch
   downgrade. Deferred — measured cost is ~1.4 s per chunk, acceptable at the
   current corpus size.
+- **The threshold filter is duplicated.** The same list comprehension lives in
+  `main()` of `search.py` and in the endpoint. A threshold change requires
+  editing both. The fix is a `max_distance=None` parameter on `search()`, so the
+  filter has one home and the caller supplies the policy; deferred until a third
+  caller exists, because at two the indirection costs more than the duplication.
+
+- **One connection, no pool.** psycopg 3 connections are thread-safe and
+  serialize query execution: threadpool workers queue behind each other on the
+  single module-level connection. Correct, but not concurrent. `ConnectionPool`
+  is the fix, deferred at demo-sized load.
+
+- **The connection is opened at import and never reopened.** If PostgreSQL
+  restarts, or the connection drops, the API process must be restarted with it.
 
 ---
 
