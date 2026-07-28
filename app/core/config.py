@@ -15,6 +15,7 @@ MODEL_NAME = "BAAI/bge-m3"
 DATABASE_URL = os.environ["DATABASE_URL"]
 TOP_K = 5
 
-# measured on a 29-chunk corpus: worst hit 0.4821, best noise 0.6000.
+# measured on a 29-chunk corpus: worst hit 0.5209, best noise 0.6000.
+# margin is 0.029 - a single new chunk can invalidate this.
 # recalculate when the corpus changes - distances are not portable across corpora.
 DISTANCE_THRESHOLD = 0.55
