@@ -10,15 +10,18 @@ type SearchResult = {
   chunk_end: number;
   distance: number;
 };
+
 function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
+
 export default function Home() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
+  const [searched, setSearched] = useState(false);
 
   async function handleSearch() {
     setLoading(true);
@@ -26,6 +29,7 @@ export default function Home() {
     const response = await fetch(url);
     const data: SearchResult[] = await response.json();
     setResults(data);
+    setSearched(true);
     setLoading(false);
   }
 
@@ -38,6 +42,9 @@ export default function Home() {
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") handleSearch();
+          }}
           placeholder="Введите запрос"
           className="flex-1 rounded border border-gray-500 px-3 py-2"
         />
@@ -50,6 +57,10 @@ export default function Home() {
       </div>
 
       {loading && <p className="mt-4">Ищу...</p>}
+
+      {!loading && searched && results.length === 0 && (
+        <p className="mt-4 text-gray-400">Ничего не нашлось</p>
+      )}
 
       <ul className="mt-4 space-y-3">
         {results.map((r) => (
