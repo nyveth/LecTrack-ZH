@@ -1,7 +1,8 @@
 # rag-bot
 
 Semantic search and Q&A over Chinese-language lecture videos.
-A transcription-first RAG pipeline: video → transcript → chunks → embeddings → vector search.
+A transcription-first RAG pipeline: video → transcript → chunks → embeddings →
+vector search → generated answer.
 
 ## Stack
 
@@ -11,8 +12,9 @@ A transcription-first RAG pipeline: video → transcript → chunks → embeddin
 | Embeddings    | BGE-M3 via sentence-transformers         |
 | Vector store  | pgvector on PostgreSQL 18                |
 | DB driver     | psycopg 3 (synchronous)                  |
+| Generation    | DeepSeek via the `openai` SDK            |
 | API           | FastAPI + uvicorn                        |
-| Frontend      | Next.js — not implemented yet            |
+| Frontend      | Next.js (App Router, TypeScript, Tailwind) |
 | Lint          | ruff                                     |
 | Tests         | pytest                                   |
 
@@ -23,6 +25,11 @@ A transcription-first RAG pipeline: video → transcript → chunks → embeddin
 - CUDA 12.4 and a GPU with ≥3 GB VRAM — required by `transcribe` only.
   `embed` and `search` currently run on CPU (see [Known limitations](#known-limitations)).
 - ~2.5 GB of free disk for the BGE-M3 weights, plus network access on first run
+- Node.js 20+ and npm — frontend only
+- A DeepSeek API key **with a non-zero balance**. There is no free grant: a new
+  account returns `granted_balance: "0.00"` from `GET /user/balance` and every
+  call fails until the account is topped up. The key is required to *import*
+  the pipeline at all — see [Configuration](#5-configuration).
 
 ## Setup
 
@@ -116,16 +123,34 @@ cp .env.example .env
 
 `.env` is gitignored. Required variables:
 
-| Variable       | Example                                              | Notes                 |
-|----------------|------------------------------------------------------|-----------------------|
-| `DATABASE_URL` | `postgresql://ragbot:password@localhost:5432/ragbot` | read via `os.environ` |
+| Variable           | Example                                              | Notes                 |
+|--------------------|------------------------------------------------------|-----------------------|
+| `DATABASE_URL`     | `postgresql://ragbot:password@localhost:5432/ragbot` | read via `os.environ` |
+| `DEEPSEEK_API_KEY` | `sk-...`                                             | read via `os.environ` |
 
-`app/core/config.py` reads `DATABASE_URL` with `os.environ[...]`, not `.get()`:
-a missing variable raises `KeyError` at import time rather than failing later
-with an obscure connection error.
+`app/core/config.py` reads both with `os.environ[...]`, not `.get()`: a missing
+variable raises `KeyError` at import time rather than failing later with an
+obscure connection error.
+
+**`DEEPSEEK_API_KEY` blocks every stage, not just generation.** `config.py` is
+imported by `transcribe`, `chunk`, `embed` and `search` alike, and the
+subscript is evaluated at import. Without the key a fresh clone cannot even
+chunk a transcript, though chunking never talks to DeepSeek. This is a
+deliberate trade — one loud failure at import beats four quiet ones later — but
+it is a real cost for anyone who only wants the ingestion half.
+
+What the check does **not** cover: the key's validity and the account balance.
+An invalid key and a zero balance both pass the import silently and fail on the
+first API call, because verifying either requires a network round trip at import
+time.
+
+The DeepSeek key is displayed **once**, at creation, and cannot be recovered —
+only regenerated. Copy the whole value including the `sk-` prefix; a key without
+it returns `authentication_error`.
 
 Non-secret constants live in `app/core/config.py`, not in `.env`:
-`TARGET_TOKENS`, `OVERLAP_TOKENS`, `MODEL_NAME`, `TOP_K`, `DISTANCE_THRESHOLD`.
+`TARGET_TOKENS`, `OVERLAP_TOKENS`, `MODEL_NAME`, `TOP_K`, `DISTANCE_THRESHOLD`,
+`DEEPSEEK_BASE_URL`, `DEEPSEEK_MODEL`, `MAX_TOKENS`.
 
 `DISTANCE_THRESHOLD` is corpus-specific and is not a portable constant — see
 [Evaluation](#evaluation).
@@ -154,6 +179,13 @@ data/chunks/        # chunk output
 logs/errors.log     # ERROR and above; INFO goes to stdout only
 ```
 
+### 8. Frontend
+
+```bash
+cd frontend
+npm install
+```
+
 ## Pipeline
 
 Run every stage from the repository root as a module:
@@ -165,6 +197,12 @@ python3 -m app.ingestion.embed             # chunks      → pgvector rows
 python3 -m app.retrieval.search "查询内容"   # query       → ranked chunks above threshold
 python3 -m scripts.eval_queries            # query set   → measurement table
 uv run uvicorn app.api.main:app --reload   # HTTP        → JSON, filtered by threshold
+```
+
+Frontend, from `frontend/` in a second shell:
+
+```bash
+npm run dev                                # http://localhost:3000
 ```
 
 Module invocation (`-m`) is not cosmetic. Running a file by path puts its own
@@ -194,6 +232,33 @@ Note that the completion marker differs by stage: for `transcribe` and `chunk`
 it is a file on disk, for `embed` it is rows in the table. Deleting the JSON
 artifacts does **not** invalidate the embeddings — see
 [Known limitations](#known-limitations).
+
+### Choosing the transcription model
+
+The whisper model name and its decoding parameters are **hardcoded in `main()`
+of `app/ingestion/transcribe.py`**, not exposed in `config.py` and not read from
+the environment. To change them, edit that function:
+
+```python
+model = WhisperModel("small", device="cuda", compute_type="int8")
+segments, info = model.transcribe(path, beam_size=5, language="zh")
+```
+
+Three of these values are deliberate and should not be raised without
+re-measuring:
+
+- **`small`, not `medium` or `large`.** On this corpus the larger model is
+  measurably *worse* at domain terminology — six times worse on the most
+  frequent term of the lecture. See
+  [Known limitations](#known-limitations) for the counts.
+- **`compute_type="int8"`.** A GTX 1060 has 3 GB of VRAM; `float16` on a larger
+  model does not fit.
+- **`language="zh"`.** Fixing the language skips autodetection, which is both a
+  round trip and a failure mode on the first seconds of a lecture.
+
+Changing any of these invalidates the transcripts, the chunks **and** the
+calibrated `DISTANCE_THRESHOLD` — and `embed` will not notice, because its skip
+check keys on `video_id` alone. Delete the affected rows before re-embedding.
 
 ## Retrieval
 
@@ -236,6 +301,51 @@ Decisions:
   the `encode()` signature. Independently, `<=>` is cosine distance and divides
   by both norms internally, so vector length cannot affect ranking here at all.
 
+## Generation
+
+`app/generation/` turns retrieved chunks into an answer. Two modules:
+
+- `prompts.py` — string constants only. No imports, no functions, no file reads.
+- `generate.py` — `build_user_message()` assembles the chunks and the question
+  into one text; `generate_answer()` makes the API call and returns the reply.
+
+```python
+generate_answer(query: str, chunks: list[dict]) -> str
+```
+
+Decisions:
+
+- **The prompt lives in its own module, not in `config.py`.** `config.py` is
+  imported by every stage and holds measured or configured values; the prompt
+  is needed by one module and will be edited often. Keeping it separate stops
+  prompt churn from filling the history of a file everyone depends on.
+- **The `openai` SDK, not raw HTTP.** DeepSeek keeps an OpenAI-compatible
+  contract, so switching providers costs a `base_url` and a model name; the
+  exception classes and the timeout come from one place. The cost is that the
+  wire format is hidden — mitigated by having driven the endpoint with `curl`
+  before adding the library.
+- **The client is created at module level.** Unlike `psycopg.connect()`,
+  `OpenAI(...)` opens no connection: it stores settings in an object and the
+  network is first touched at call time. There is therefore no "client went
+  stale while the provider restarted" failure mode to catch.
+- **Thinking mode is disabled** via `extra_body={"thinking": {"type": "disabled"}}`.
+  It is on by default on DeepSeek and its reasoning tokens are billed as output.
+  A side effect documented by the provider and worth knowing: while thinking is
+  enabled, `temperature`, `top_p`, `presence_penalty` and `frequency_penalty`
+  raise no error and have no effect.
+- **`max_tokens` caps the output only.** Input size is set by `TOP_K` and by
+  chunk length (up to 255 s of speech per chunk), so `max_tokens` is not a cost
+  ceiling for the request. A measured call sat at 1542 total tokens under
+  `max_tokens=800` with `finish_reason: stop` — the cap was never reached.
+- **A non-empty `chunks` list is a precondition, not something the function
+  re-checks.** Threshold filtering happens in the endpoint, so "nothing passed
+  the cutoff" is decided before generation is reached and costs zero API calls.
+- **The answer language is stated outright in the system prompt.** An earlier
+  relative instruction ("answer in the language of the question") did not hold:
+  the corpus is Chinese, and the reply came back in Chinese. Naming the target
+  language explicitly, in a prompt written in that language, currently holds —
+  on one observation, not on a guarantee.
+
 ## API
 
 `app/api/main.py` exposes `search()` over HTTP. From the repository root:
@@ -260,6 +370,9 @@ the flag when not editing.
 | Response     | `200` + JSON array: `chunk_id`, `video_id`, `text`, `chunk_start`, `chunk_end`, `distance` |
 | No match     | `200` + `[]` |
 
+The endpoint does **not** call `generate_answer()` yet — see
+[Known limitations](#known-limitations).
+
 Decisions:
 
 - **The handler is a plain `def`, not `async def`.** FastAPI runs a plain `def`
@@ -280,6 +393,23 @@ Decisions:
 - **An empty result is `200`, not `404`.** The search ran and matched nothing;
   the endpoint exists. `404` would mean the route is missing. The client has to
   distinguish "empty" from "failed" — that is honest work, unlike showing noise.
+- **CORS is enabled for the local Next.js origin only.** The frontend runs on a
+  different port, which makes every request cross-origin; the middleware names
+  that one origin rather than `*`.
+
+## Frontend
+
+A single-page search interface: query box, Enter to submit, results as a list of
+chunks with their distances, and an explicit empty state distinguishing "nothing
+matched" from "not searched yet".
+
+```bash
+cd frontend
+npm run dev
+```
+
+The API base URL is currently hardcoded — see
+[Known limitations](#known-limitations).
 
 ## Evaluation
 
@@ -391,7 +521,9 @@ app/
   core/        # config.py (constants + .env), log_config.py, results.py (FileResult)
   ingestion/   # transcribe, chunk, embed
   retrieval/   # search
-   api/         # main.py — FastAPI app over search()
+  generation/  # prompts.py (strings), generate.py (prompt assembly + API call)
+  api/         # main.py — FastAPI app over search()
+frontend/      # Next.js app — search UI
 scripts/       # measurement helpers: eval_queries, measure_chunk_lengths, snapshot
 tests/         # queries.json — the evaluation set. No test code yet.
 ```
@@ -409,8 +541,48 @@ root, never as a bare script path.
 | retrieval  | ✓ exact cosine scan, calibrated cutoff, CLI entry point           |
 | evaluation | ✓ fixed multilingual query set, mechanical term check             |
 | API        | ✓ GET /search, threshold applied, interactive docs                |
+| frontend   | ✓ search box, results list, empty state                           |
+| generation | ~ module works end to end from a script; not wired into the API   |
 
 ## Known limitations
+
+- **Generation is not reachable over HTTP.** `generate_answer()` has been run
+  end to end — query → embedding → pgvector → threshold → prompt → answer — but
+  only from a throwaway script. `GET /search` still returns the flat chunk list.
+  Wiring it in changes the response shape from an array to an object (answer
+  plus sources), which will break `results.map` in the frontend loudly, as
+  intended.
+
+- **`generate_answer()` has no error handling.** No `try`, no timeout, no
+  `finish_reason` check. Any provider failure — HTTP error, DNS failure, dropped
+  connection, or silence — propagates as a traceback and, through FastAPI, as a
+  bare `500`. Deliberate: the happy path was verified first, on the grounds that
+  debugging failure branches against an unproven call proves nothing. The five
+  outcomes of the call (success, truncation at `max_tokens`, error response,
+  no response, silence) are the next piece of work.
+
+- **The model extrapolates when the retrieved context is thin.** Observed: a
+  question about clock generation returned chunks in which the lecturer said
+  only that it is "standard" and moved on; the answer supplied the standard
+  Verilog construction from pre-training, phrased as if it came from the source.
+  The system prompt forbids exactly this. A prompt is a request, not a
+  mechanism — anything that must hold has to hold in code.
+
+- **The threshold cuts relevant chunks, not only noise.** Observed at 0.5815: a
+  chunk listing the actual pin assignments for the experiment, containing the
+  queried term eight times, sat above the 0.55 cutoff and was dropped. The
+  mirror-image failure was seen in the same week — chunks passing the cutoff on
+  a query they did not answer. Both follow from a threshold calibrated on 5
+  concepts over 29 chunks; neither is fixed by moving the number.
+
+- **`TOP_K = 5` can spend slots on near-duplicate chunks.** Chunking overlaps by
+  design, so two retrieved chunks may share most of their text. Observed: five
+  results of which two were largely the same passage. Input tokens are paid for
+  all five, and `max_tokens` does not cap input.
+
+- **The frontend hardcodes `http://127.0.0.1:8000`** in its `fetch` call. It
+  works for local development and blocks any deployment where the API is not on
+  the same host.
 
 - **ASR mangles domain terminology, and a larger model does not fix it.**
   On Chinese technical lecture audio, whisper substitutes homophones: the
@@ -490,6 +662,7 @@ root, never as a bare script path.
   cu128/cu129 wheels. Fixing this needs a cu126 build and possibly a torch
   downgrade. Deferred — measured cost is ~1.4 s per chunk, acceptable at the
   current corpus size.
+
 - **The threshold filter is duplicated.** The same list comprehension lives in
   `main()` of `search.py` and in the endpoint. A threshold change requires
   editing both. The fix is a `max_distance=None` parameter on `search()`, so the
@@ -503,6 +676,12 @@ root, never as a bare script path.
 
 - **The connection is opened at import and never reopened.** If PostgreSQL
   restarts, or the connection drops, the API process must be restarted with it.
+
+- **A hanging LLM call holds a threadpool worker.** The DeepSeek call is
+  synchronous and currently has no timeout, so a slow provider occupies its
+  worker for the full duration. Combined with the single DB connection, a
+  handful of such requests leaves the API unresponsive while the process is
+  alive and the port is open.
 
 ---
 
