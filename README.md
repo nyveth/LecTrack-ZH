@@ -1,4 +1,4 @@
-# rag-bot
+# CangJie-RAG
 
 Semantic search and Q&A over Chinese-language lecture videos.
 A transcription-first RAG pipeline: video → transcript → chunks → embeddings →
