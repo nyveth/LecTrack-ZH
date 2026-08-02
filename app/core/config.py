@@ -17,6 +17,7 @@ TOP_K = 5
 DEEPSEEK_API_KEY = os.environ["DEEPSEEK_API_KEY"]
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEEPSEEK_MODEL = "deepseek-v4-flash"
+DEEPSEEK_MAX_TOKENS = 1000
 
 # measured on a 29-chunk corpus: worst hit 0.5209, best noise 0.6000.
 # margin is 0.029 - a single new chunk can invalidate this.
