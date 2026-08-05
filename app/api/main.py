@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import DATABASE_URL, MODEL_NAME, TOP_K, DISTANCE_THRESHOLD
 from app.retrieval.search import search
+from app.generation.generate import generate_answer
 
 app = FastAPI()
 app.add_middleware(
@@ -23,7 +24,12 @@ register_vector(conn)
 
 
 @app.get("/search")
-def search_endpoint(query: str, top_k: int = TOP_K) -> list[dict]:
+def search_endpoint(query: str, top_k: int = TOP_K) -> dict:
     results = search(query=query, conn=conn, top_k=top_k, model=model)
+
     filtered_results = [row for row in results if row["distance"] <= DISTANCE_THRESHOLD]
-    return filtered_results
+    if not filtered_results:
+        return {"answer": "", "sources": []}
+
+    answer_llm = generate_answer(query, filtered_results)
+    return {"answer": answer_llm, "sources": filtered_results}

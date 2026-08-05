@@ -9,7 +9,6 @@ from app.core.config import (
 from app.generation.prompts import SYSTEM_PROMPT
 
 
-# РЕШЕНИЕ 3: уровень модуля или внутрь функции — сверься с прецедентом соединения к БД
 client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
 
 
