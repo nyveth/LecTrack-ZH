@@ -4,6 +4,12 @@ Semantic search and Q&A over Chinese-language lecture videos.
 A transcription-first RAG pipeline: video → transcript → chunks → embeddings →
 vector search → generated answer.
 
+## Demo
+
+*A question in English against a Chinese lecture corpus: retrieval finds the
+relevant chunks, DeepSeek generates the answer, and the sources with
+timestamps let the user verify it against the video.*
+
 ## Stack
 
 | Layer         | Tool                                     |
@@ -150,7 +156,7 @@ it returns `authentication_error`.
 
 Non-secret constants live in `app/core/config.py`, not in `.env`:
 `TARGET_TOKENS`, `OVERLAP_TOKENS`, `MODEL_NAME`, `TOP_K`, `DISTANCE_THRESHOLD`,
-`DEEPSEEK_BASE_URL`, `DEEPSEEK_MODEL`, `MAX_TOKENS`.
+`DEEPSEEK_BASE_URL`, `DEEPSEEK_MODEL`, `DEEPSEEK_MAX_TOKENS`.
 
 `DISTANCE_THRESHOLD` is corpus-specific and is not a portable constant — see
 [Evaluation](#evaluation).
@@ -196,7 +202,7 @@ python3 -m app.ingestion.chunk             # transcript  → overlapping chunks 
 python3 -m app.ingestion.embed             # chunks      → pgvector rows
 python3 -m app.retrieval.search "查询内容"   # query       → ranked chunks above threshold
 python3 -m scripts.eval_queries            # query set   → measurement table
-uv run uvicorn app.api.main:app --reload   # HTTP        → JSON, filtered by threshold
+uv run uvicorn app.api.main:app --reload   # HTTP        → JSON: answer + sources
 ```
 
 Frontend, from `frontend/` in a second shell:
@@ -340,68 +346,109 @@ Decisions:
 - **A non-empty `chunks` list is a precondition, not something the function
   re-checks.** Threshold filtering happens in the endpoint, so "nothing passed
   the cutoff" is decided before generation is reached and costs zero API calls.
-- **The answer language is stated outright in the system prompt.** An earlier
-  relative instruction ("answer in the language of the question") did not hold:
-  the corpus is Chinese, and the reply came back in Chinese. Naming the target
-  language explicitly, in a prompt written in that language, currently holds —
-  on one observation, not on a guarantee.
+- **Provider exceptions do not cross the module boundary.** The three `openai`
+  exception classes (`APIConnectionError`, `APITimeoutError`, `APIStatusError`)
+  are caught here and re-raised as one domain exception, `LlmUnavailable`;
+  the endpoint knows nothing about the SDK. Truncation is the fourth failure
+  and the only silent one: it arrives as a *valid* response with
+  `finish_reason: "length"` — measured: with a low cap the content can be
+  entirely empty — so it is detected by an `if` after the call, not by an
+  `except`, and raises the same `LlmUnavailable`. Details (`status_code`,
+  traceback) go to the log at the point of failure; the client receives one
+  generic message, because the user's only recourse is to retry.
+- **The answer language follows the query language; the prompt barely
+  influences it.** Measured across two prompt configurations. With the system
+  prompt written in Russian: Russian query → Russian, English query → Russian,
+  Chinese query → Chinese. After rewriting the prompt in English: Russian
+  query → Russian, English query → English, Chinese query → Chinese. The only
+  case the prompt ever decided was the one where it agreed with nothing —
+  and rewriting it flipped exactly that case. The instruction sets a
+  probability; the query and the retrieved context set the rest. For this
+  product the behaviour is acceptable — the user gets an answer in the
+  language they asked in — but it is emergent, not guaranteed: anything that
+  must hold has to hold in code, and a post-generation language check does
+  not exist yet.
 
 ## API
 
-`app/api/main.py` exposes `search()` over HTTP. From the repository root:
+`app/api/main.py` wires retrieval and generation into one endpoint. From the
+repository root:
 
 ```bash
 uv run uvicorn app.api.main:app --reload
 ```
 
 This is the one stage not invoked with `python3 -m`: uvicorn imports the module
-and needs the app object named. `app.api.main` is the same module path, `:app`
-is the variable inside it.
-
-Interactive docs at `http://127.0.0.1:8000/docs`, generated from the handler's
-type hints — no schema is written by hand. `--reload` re-imports the module on
-every file change, and the module loads 2.27 GB of weights at import, so drop
-the flag when not editing.
+and needs the app object named. Interactive docs at `http://127.0.0.1:8000/docs`.
+`--reload` re-imports the module on every file change, and the module loads
+2.27 GB of weights at import, so drop the flag when not editing.
 
 | | |
 |---|---|
 | Route        | `GET /search` |
-| Query params | `query` (required), `top_k` (defaults to `TOP_K`) |
-| Response     | `200` + JSON array: `chunk_id`, `video_id`, `text`, `chunk_start`, `chunk_end`, `distance` |
-| No match     | `200` + `[]` |
+| Query params | `query` (required, non-blank), `top_k` (defaults to `TOP_K`) |
+| `200`        | `{"answer": str, "sources": [chunk, ...]}` |
+| `200`, no match | `{"answer": "", "sources": []}` — same shape, empty values |
+| `400`        | blank or whitespace-only `query` |
+| `503`        | LLM provider failed; retrieval result is discarded |
 
-The endpoint does **not** call `generate_answer()` yet — see
-[Known limitations](#known-limitations).
+Each `chunk` in `sources` carries `chunk_id`, `video_id`, `text`, `chunk_start`,
+`chunk_end`, `distance` — the raw row from `search()`, deliberately unfiltered
+(single consumer, own frontend; field selection becomes worth it with a second
+consumer).
 
 Decisions:
 
+- **The response shape is constant across outcomes.** "Found" and "found
+  nothing" differ in content, not in structure: the client reads `answer` and
+  `sources` unconditionally and detects emptiness by content. Distinguishable
+  outcomes that need distinguishable *handling* get distinguishable signals
+  instead — `400` and `503` are separate statuses, not sentinel values inside a
+  `200`.
+- **An empty retrieval result exits before generation.** The LLM call is paid
+  and there is nothing to generate from; the early return costs zero API calls.
+- **Provider failure maps to `503`, not `500`.** `500` means a bug in this
+  code; `503` means this code is fine and an external dependency is not. The
+  distinction is readable from a monitoring dashboard before opening the logs.
+  On failure the found sources are discarded — a deliberate trade: keeping them
+  requires a partial-failure field in the contract and a third rendering branch
+  in the client, for an event that is rare and delivers little (sources without
+  an answer are raw Chinese text).
+- **Blank queries are rejected on both sides.** The frontend refuses to send
+  them (user convenience); the endpoint returns `400` regardless (the API has
+  other callers than this frontend — curl, tests, future clients). An empty
+  string embeds into a centroid-like vector that *passes* the distance
+  threshold, so without validation a blank query returns arbitrary chunks and
+  pays for a generation call.
+- **Errors are logged at the point of failure, not by the framework.**
+  `setup_logging()` is called at import; `generate.py` logs with
+  `logger.exception` inside its `except` branches, where `status_code` and the
+  provider traceback still exist. FastAPI's own 500 logging knows neither.
 - **The handler is a plain `def`, not `async def`.** FastAPI runs a plain `def`
   in an external threadpool; an `async def` runs directly on the event loop.
   Both calls inside the handler block — psycopg 3 is synchronous and
   `model.encode()` is CPU-bound for seconds — so `async def` would stall every
-  concurrent request, which is worse than not being async at all. The defect is
-  invisible with a single user: it surfaces only on the second simultaneous
-  request.
+  concurrent request. See [Known limitations](#known-limitations) for what this
+  costs under load and where the numbers point.
 - **The model and the connection live at module level.** Module-level code runs
-  once per process, function-level code runs once per request. Loading 2.27 GB
-  of weights per request would make the endpoint unusable.
+  once per process; per-request loading of 2.27 GB of weights would make the
+  endpoint unusable. A second, independent reason: module level runs at import,
+  so a broken `DATABASE_URL` kills uvicorn at startup instead of failing for
+  the first user in production.
 - **`Depends` is not used.** Its payoff is substitutability under test, and
   there are no API tests yet. It goes in when they exist, not before.
-- **The threshold is applied here, not in the client.** It is calibrated against
-  the corpus, so it belongs next to the data. A frontend holding `0.55` breaks
-  silently the day the corpus grows.
-- **An empty result is `200`, not `404`.** The search ran and matched nothing;
-  the endpoint exists. `404` would mean the route is missing. The client has to
-  distinguish "empty" from "failed" — that is honest work, unlike showing noise.
-- **CORS is enabled for the local Next.js origin only.** The frontend runs on a
-  different port, which makes every request cross-origin; the middleware names
-  that one origin rather than `*`.
+- **The threshold is applied here, not in the client.** It is calibrated
+  against the corpus, so it belongs next to the data.
+- **CORS is enabled for the local Next.js origin only.**
 
 ## Frontend
 
-A single-page search interface: query box, Enter to submit, results as a list of
-chunks with their distances, and an explicit empty state distinguishing "nothing
-matched" from "not searched yet".
+A single-page interface in English: query box, Enter to submit, a generated
+answer block, and the source chunks with video timestamps underneath. Blank
+queries are blocked before `fetch`. Non-2xx responses render an error banner
+from the response's `detail`; a network-level failure (server down) gets its
+own message via `catch`. State is reset at the start of every search, so an
+error from one request cannot survive into the rendering of the next.
 
 ```bash
 cd frontend
@@ -525,7 +572,7 @@ app/
   api/         # main.py — FastAPI app over search()
 frontend/      # Next.js app — search UI
 scripts/       # measurement helpers: eval_queries, measure_chunk_lengths, snapshot
-tests/         # queries.json — the evaluation set. No test code yet.
+tests/       # queries.json — the evaluation set; test_chunk_transcript.py — tail-branch regression
 ```
 
 Absolute imports from `app`; every stage is invoked as a module from the repo
@@ -541,25 +588,10 @@ root, never as a bare script path.
 | retrieval  | ✓ exact cosine scan, calibrated cutoff, CLI entry point           |
 | evaluation | ✓ fixed multilingual query set, mechanical term check             |
 | API        | ✓ GET /search, threshold applied, interactive docs                |
-| frontend   | ✓ search box, results list, empty state                           |
-| generation | ~ module works end to end from a script; not wired into the API   |
+| frontend   | ✓ search box, answer block, sources list, error states            |
+| generation | ✓ wired into /search: error boundary, truncation check, logged failures |
 
 ## Known limitations
-
-- **Generation is not reachable over HTTP.** `generate_answer()` has been run
-  end to end — query → embedding → pgvector → threshold → prompt → answer — but
-  only from a throwaway script. `GET /search` still returns the flat chunk list.
-  Wiring it in changes the response shape from an array to an object (answer
-  plus sources), which will break `results.map` in the frontend loudly, as
-  intended.
-
-- **`generate_answer()` has no error handling.** No `try`, no timeout, no
-  `finish_reason` check. Any provider failure — HTTP error, DNS failure, dropped
-  connection, or silence — propagates as a traceback and, through FastAPI, as a
-  bare `500`. Deliberate: the happy path was verified first, on the grounds that
-  debugging failure branches against an unproven call proves nothing. The five
-  outcomes of the call (success, truncation at `max_tokens`, error response,
-  no response, silence) are the next piece of work.
 
 - **The model extrapolates when the retrieved context is thin.** Observed: a
   question about clock generation returned chunks in which the lecturer said
@@ -567,6 +599,12 @@ root, never as a bare script path.
   Verilog construction from pre-training, phrased as if it came from the source.
   The system prompt forbids exactly this. A prompt is a request, not a
   mechanism — anything that must hold has to hold in code.
+
+- **The answer language is emergent, not enforced.** It follows the query
+  language regardless of what the prompt requests (measured across two prompt
+  configurations, three query languages each — see [Generation](#generation)).
+  Currently this is the desired behaviour by luck, not by mechanism; there is
+  no post-generation check to enforce it.
 
 - **The threshold cuts relevant chunks, not only noise.** Observed at 0.5815: a
   chunk listing the actual pin assignments for the experiment, containing the
@@ -637,9 +675,10 @@ root, never as a bare script path.
 
 - **The threshold margin is thin.** 0.55 sits 0.029 above the worst measured hit
   and 0.050 below the best measured noise. One slightly harder query would push
-  a valid hit past the cutoff. The comment next to `DISTANCE_THRESHOLD` in
-  `config.py` still quotes the values from before `counter_isolated` was added
-  and understates how tight the window is.
+  a valid hit past the cutoff.Measured live: the same English query with `Verilog`
+  lowercased shifted its top-1 distance from 0.5170 to above the 0.55 cutoff — a
+  capitalization choice the user cannot be expected to control decided between an
+  answer and "nothing found".
 
 - **The evaluation set is small and partly non-blind.** 2 noise concepts across
   3 videos in 1.5 domains. `管脚分配` and `红烧肉怎么做` were both run in earlier
@@ -669,10 +708,20 @@ root, never as a bare script path.
   filter has one home and the caller supplies the policy; deferred until a third
   caller exists, because at two the indirection costs more than the duplication.
 
-- **One connection, no pool.** psycopg 3 connections are thread-safe and
-  serialize query execution: threadpool workers queue behind each other on the
-  single module-level connection. Correct, but not concurrent. `ConnectionPool`
-  is the fix, deferred at demo-sized load.
+- **Concurrency ceiling: ~40 requests, and the bottlenecks are serial.**
+  FastAPI runs sync handlers in a 40-worker threadpool. Inside each request,
+  three stages block: `model.encode()` (~1.4 s of CPU on this machine), the
+  single module-level psycopg connection (thread-safe but *serializing* —
+  concurrent queries queue behind each other), and the DeepSeek call (network
+  wait, seconds). Estimated behaviour: fine below ~5 concurrent users, linear
+  degradation to ~20, full stop at 40+ when the pool is exhausted. The worst
+  case is a slow provider: workers sit in network wait while the CPU idles.
+  Going async would fix only the waiting stages — and only with an async DB
+  driver and `AsyncOpenAI`; `model.encode()` would still need an executor, or
+  it blocks the event loop for everyone, which is *worse* than the threadpool.
+  At demo load (one user) none of this binds, so the sync design stays. The
+  cheap fix that is actually pending: a client-level timeout (the SDK default
+  is 600 s), which caps the worst case at one line.
 
 - **The connection is opened at import and never reopened.** If PostgreSQL
   restarts, or the connection drops, the API process must be restarted with it.
