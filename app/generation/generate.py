@@ -1,4 +1,6 @@
-from openai import OpenAI
+import logging
+
+from openai import OpenAI, APIConnectionError, APITimeoutError, APIStatusError
 
 from app.core.config import (
     DEEPSEEK_MODEL,
@@ -9,7 +11,12 @@ from app.core.config import (
 from app.generation.prompts import SYSTEM_PROMPT
 
 
+class LlmUnavailable(Exception):
+    pass
+
+
 client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
+logger = logging.getLogger(__name__)
 
 
 def build_user_message(query: str, chunks: list[dict]) -> str:
@@ -33,11 +40,26 @@ def generate_answer(query: str, chunks: list[dict]) -> str:
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": user_content},
     ]
+    try:
+        response = client.chat.completions.create(
+            model=DEEPSEEK_MODEL,
+            messages=messages,
+            extra_body={"thinking": {"type": "disabled"}},
+            max_tokens=DEEPSEEK_MAX_TOKENS,
+        )
+    except APIConnectionError:
+        logger.exception("Network error while connecting to DeepSeek")
+        raise LlmUnavailable("Network error while connecting to DeepSeek")
+    except APITimeoutError:
+        logger.exception("Timeout after waiting for OpenAI endpoint")
+        raise LlmUnavailable("Timeout after waiting for OpenAI endpoint")
+    except APIStatusError as exc:
+        logger.exception("LLM service unavailable (HTTP %s)", exc.status_code)
+        raise LlmUnavailable("Provider rejected request")
 
-    response = client.chat.completions.create(
-        model=DEEPSEEK_MODEL,
-        messages=messages,
-        extra_body={"thinking": {"type": "disabled"}},
-        max_tokens=DEEPSEEK_MAX_TOKENS,
-    )
+    finish_reason = response.choices[0].finish_reason
+    if finish_reason != "stop":
+        logger.error("LLM model stopped by %s", finish_reason)
+        raise LlmUnavailable(f"LLM model stopped by {finish_reason}")
+
     return response.choices[0].message.content

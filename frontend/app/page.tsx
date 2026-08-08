@@ -26,18 +26,37 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [answer, setAnswer] = useState("");
   const [sources, setSources] = useState<Source[]>([]);
+  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
 
   async function handleSearch() {
+    if (!query.trim()) return;
+
     setLoading(true);
-    const url = `http://127.0.0.1:8000/search?query=${encodeURIComponent(query)}`;
-    const response = await fetch(url);
-    const data: SearchResponse = await response.json();
-    setAnswer(data.answer);
-    setSources(data.sources);
-    setSearched(true);
-    setLoading(false);
+    setError("");
+    setAnswer("");
+    setSources([]);
+
+    try {
+      const url = `http://127.0.0.1:8000/search?query=${encodeURIComponent(query)}`;
+      const response = await fetch(url);
+
+      if (!response.ok) {
+        const problem = await response.json();
+        setError(problem.detail ?? "Something went wrong. Please try again.");
+        return;
+      }
+
+      const data: SearchResponse = await response.json();
+      setAnswer(data.answer);
+      setSources(data.sources);
+      setSearched(true);
+    } catch {
+      setError("Cannot reach the server. Please try again later.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -70,7 +89,13 @@ export default function Home() {
         </div>
       )}
 
-      {!loading && searched && sources.length === 0 && (
+      {!loading && error && (
+        <p className="mt-4 rounded border border-red-900 bg-red-950/40 p-3 text-red-300">
+          {error}
+        </p>
+      )}
+
+      {!loading && !error && searched && sources.length === 0 && (
         <p className="mt-4 text-gray-400">Nothing found</p>
       )}
 
