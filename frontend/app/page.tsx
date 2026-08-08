@@ -71,7 +71,7 @@ export default function Home() {
           onKeyDown={(e) => {
             if (e.key === "Enter") handleSearch();
           }}
-          placeholder="Ask a question about the lectures"
+          placeholder="Ask about the lectures"
           className="flex-1 rounded border border-gray-500 px-3 py-2"
         />
         <button
