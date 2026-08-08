@@ -6,6 +6,10 @@ vector search → generated answer.
 
 ## Demo
 
+
+https://github.com/user-attachments/assets/330158a7-0056-46d7-b5bb-32151f0eee4a
+
+
 *A question in English against a Chinese lecture corpus: retrieval finds the
 relevant chunks, DeepSeek generates the answer, and the sources with
 timestamps let the user verify it against the video.*
