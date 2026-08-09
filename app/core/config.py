@@ -19,6 +19,11 @@ DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEEPSEEK_MODEL = "deepseek-v4-flash"
 DEEPSEEK_MAX_TOKENS = 1000
 
+# measured: 6 calls, longest 6-7s, none reached the 1000-token cap.
+# extrapolated worst case ~15s at a full cap; 30 is a 2x margin over that.
+# not derived from concurrency - the queue forms before the call starts.
+DEEPSEEK_TIMEOUT = 30.0
+
 # measured on a 29-chunk corpus: worst hit 0.5209, best noise 0.6000.
 # margin is 0.029 - a single new chunk can invalidate this.
 # recalculate when the corpus changes - distances are not portable across corpora.

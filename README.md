@@ -160,7 +160,7 @@ it returns `authentication_error`.
 
 Non-secret constants live in `app/core/config.py`, not in `.env`:
 `TARGET_TOKENS`, `OVERLAP_TOKENS`, `MODEL_NAME`, `TOP_K`, `DISTANCE_THRESHOLD`,
-`DEEPSEEK_BASE_URL`, `DEEPSEEK_MODEL`, `DEEPSEEK_MAX_TOKENS`.
+`DEEPSEEK_BASE_URL`, `DEEPSEEK_MODEL`, `DEEPSEEK_MAX_TOKENS` `DEEPSEEK_TIMEOUT`.
 
 `DISTANCE_THRESHOLD` is corpus-specific and is not a portable constant — see
 [Evaluation](#evaluation).
@@ -310,6 +310,7 @@ Decisions:
   `normalize_embeddings`. The source of truth is the model's `modules.json`, not
   the `encode()` signature. Independently, `<=>` is cosine distance and divides
   by both norms internally, so vector length cannot affect ranking here at all.
+  
 
 ## Generation
 
@@ -345,8 +346,10 @@ Decisions:
   raise no error and have no effect.
 - **`max_tokens` caps the output only.** Input size is set by `TOP_K` and by
   chunk length (up to 255 s of speech per chunk), so `max_tokens` is not a cost
-  ceiling for the request. A measured call sat at 1542 total tokens under
-  `max_tokens=800` with `finish_reason: stop` — the cap was never reached.
+  ceiling for the request. A measured call sat at 1542 total tokens with 
+  `finish_reason: stop` — the cap was never reached. That measurement was taken
+  at `max_tokens=800`; the current value is 1000, and no observed call has reached
+  it either.
 - **A non-empty `chunks` list is a precondition, not something the function
   re-checks.** Threshold filtering happens in the endpoint, so "nothing passed
   the cutoff" is decided before generation is reached and costs zero API calls.
@@ -723,9 +726,9 @@ root, never as a bare script path.
   Going async would fix only the waiting stages — and only with an async DB
   driver and `AsyncOpenAI`; `model.encode()` would still need an executor, or
   it blocks the event loop for everyone, which is *worse* than the threadpool.
-  At demo load (one user) none of this binds, so the sync design stays. The
-  cheap fix that is actually pending: a client-level timeout (the SDK default
-  is 600 s), which caps the worst case at one line.
+  At demo load (one user) none of this binds, so the sync design stays. The 
+  worst case is now bounded by DEEPSEEK_TIMEOUT (30 s) rather than by the SDK 
+  default of 600 s.
 
 - **The connection is opened at import and never reopened.** If PostgreSQL
   restarts, or the connection drops, the API process must be restarted with it.

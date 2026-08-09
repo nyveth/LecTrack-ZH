@@ -7,6 +7,7 @@ from app.core.config import (
     DEEPSEEK_API_KEY,
     DEEPSEEK_BASE_URL,
     DEEPSEEK_MAX_TOKENS,
+    DEEPSEEK_TIMEOUT,
 )
 from app.generation.prompts import SYSTEM_PROMPT
 
@@ -15,7 +16,9 @@ class LlmUnavailable(Exception):
     pass
 
 
-client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
+client = OpenAI(
+    api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL, timeout=DEEPSEEK_TIMEOUT
+)
 logger = logging.getLogger(__name__)
 
 
