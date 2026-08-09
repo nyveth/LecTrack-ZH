@@ -370,11 +370,32 @@ Decisions:
   query → Russian, English query → English, Chinese query → Chinese. The only
   case the prompt ever decided was the one where it agreed with nothing —
   and rewriting it flipped exactly that case. The instruction sets a
-  probability; the query and the retrieved context set the rest. For this
-  product the behaviour is acceptable — the user gets an answer in the
-  language they asked in — but it is emergent, not guaranteed: anything that
-  must hold has to hold in code, and a post-generation language check does
-  not exist yet.
+  probability; the query and the retrieved context set the rest. - **The answer
+  language follows the query language; the prompt barely
+  influences it.** Measured across two prompt configurations. With the system
+  prompt written in Russian: Russian query → Russian, English query → Russian,
+  Chinese query → Chinese. After rewriting the prompt in English: Russian
+  query → Russian, English query → English, Chinese query → Chinese. The only
+  case the prompt ever decided was the one where it agreed with nothing —
+  and rewriting it flipped exactly that case. The instruction sets a
+  probability; the query and the retrieved context set the rest. A later
+  counterexample breaks the rule: an English question about a medical topic
+  returned an answer entirely in Chinese, the language of the corpus, while an
+  English question about the engineering material in the same corpus answered
+  in English. Two of three observed cases follow the query, one follows the
+  context; the mechanism behind the split is unknown and one observation is not
+  enough to name it. For this product the usual behaviour is the desired one —
+  the user gets an answer in the language they asked in — but it is emergent
+  and demonstrably not guaranteed: anything that must hold has to hold in code,
+  and a post-generation language check does not exist yet.
+- **The timeout is derived from the output ceiling, not from expected load.**
+  `DEEPSEEK_TIMEOUT = 30.0` measures the duration of a single provider call.
+  Concurrency does not enter the calculation: requests queue *before* the call
+  starts, so the clock is not running while they wait. Under load the correct
+  move is a *smaller* value, not a larger one — a hanging call holds its worker
+  for exactly as long as the timeout allows. Basis: 6 measured calls, longest
+  6–7 s, none of which reached the 1000-token cap; extrapolated to a full cap
+  that is roughly 15 s, and 30 leaves a 2× margin for provider tail latency.
 
 ## API
 
@@ -607,11 +628,13 @@ root, never as a bare script path.
   The system prompt forbids exactly this. A prompt is a request, not a
   mechanism — anything that must hold has to hold in code.
 
-- **The answer language is emergent, not enforced.** It follows the query
-  language regardless of what the prompt requests (measured across two prompt
-  configurations, three query languages each — see [Generation](#generation)).
-  Currently this is the desired behaviour by luck, not by mechanism; there is
-  no post-generation check to enforce it.
+- **The answer language is emergent, not enforced.** It usually follows the
+  query language regardless of what the prompt requests (measured across two
+  prompt configurations, three query languages each — see
+  [Generation](#generation)). Not always: an English query has been observed
+  returning an answer entirely in Chinese, the language of the corpus, with the
+  prompt explicitly instructing English. There is no post-generation check, so
+  nothing prevents this from happening in front of a user.
 
 - **The threshold cuts relevant chunks, not only noise.** Observed at 0.5815: a
   chunk listing the actual pin assignments for the experiment, containing the
