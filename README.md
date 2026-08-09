@@ -703,12 +703,20 @@ root, never as a bare script path.
   missed, and a change of chunking parameters is not detected at all — the
   transcripts did not change, so nothing looks stale.
 
-- **The threshold margin is thin.** 0.55 sits 0.029 above the worst measured hit
-  and 0.050 below the best measured noise. One slightly harder query would push
-  a valid hit past the cutoff.Measured live: the same English query with `Verilog`
-  lowercased shifted its top-1 distance from 0.5170 to above the 0.55 cutoff — a
-  capitalization choice the user cannot be expected to control decided between an
-  answer and "nothing found".
+- **The threshold margin is thin.** 0.55 sits 0.029 above the worst measured
+  hit and 0.050 below the best measured noise. One slightly harder query would
+  push a valid hit past the cutoff.
+
+  Case sensitivity was then measured systematically across the 7 evaluation
+  concepts: lowercasing the English query shifts top-1 distance by at most
+  ±0.009, changes no outcome, and never displaces the top-1 chunk (top-3
+  membership shifts in 2 of 7). One query outside that set behaves differently:
+  "How does a counter work in Verilog" retrieves at 0.5170, and the same query
+  with `verilog` lowercased falls past the 0.55 cutoff — a shift of at least
+  +0.033, and the difference between an answer and "nothing found". The proper
+  noun is the only structural difference from the 7 concepts, which suggests
+  the effect scales with how unusual the casing is for that token rather than
+  with casing as such. One observation, not a measured effect.
 
 - **The evaluation set is small and partly non-blind.** 2 noise concepts across
   3 videos in 1.5 domains. `管脚分配` and `红烧肉怎么做` were both run in earlier
