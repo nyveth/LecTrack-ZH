@@ -1,6 +1,7 @@
 import logging
 
-from openai import OpenAI, APIConnectionError, APITimeoutError, APIStatusError
+from openai import OpenAI, APIConnectionError, APITimeoutError, APIStatusError, Stream
+from openai.types.chat import ChatCompletionChunk
 
 from app.core.config import (
     DEEPSEEK_MODEL,
@@ -13,6 +14,10 @@ from app.generation.prompts import SYSTEM_PROMPT
 
 
 class LlmUnavailable(Exception):
+    pass
+
+
+class LlmTruncated(Exception):
     pass
 
 
@@ -35,7 +40,9 @@ def build_user_message(query: str, chunks: list[dict]) -> str:
     return f"Контекст:\n{context_block}\n\nВопрос:\n{query}"
 
 
-def generate_answer(query: str, chunks: list[dict]) -> str:
+def start_generate_answer(
+    query: str, chunks: list[dict]
+) -> Stream[ChatCompletionChunk]:
     """Generates the model's text response based on the question and context chunks."""
     user_content = build_user_message(query, chunks)
 
@@ -44,11 +51,12 @@ def generate_answer(query: str, chunks: list[dict]) -> str:
         {"role": "user", "content": user_content},
     ]
     try:
-        response = client.chat.completions.create(
+        return client.chat.completions.create(
             model=DEEPSEEK_MODEL,
             messages=messages,
             extra_body={"thinking": {"type": "disabled"}},
             max_tokens=DEEPSEEK_MAX_TOKENS,
+            stream=True,
         )
     except APIConnectionError:
         logger.exception("Network error while connecting to DeepSeek")
@@ -60,9 +68,25 @@ def generate_answer(query: str, chunks: list[dict]) -> str:
         logger.exception("LLM service unavailable (HTTP %s)", exc.status_code)
         raise LlmUnavailable("Provider rejected request")
 
-    finish_reason = response.choices[0].finish_reason
-    if finish_reason != "stop":
-        logger.error("LLM model stopped by %s", finish_reason)
-        raise LlmUnavailable(f"LLM model stopped by {finish_reason}")
 
-    return response.choices[0].message.content
+def iter_answer_tokens(stream: Stream[ChatCompletionChunk]):
+    finish_reason = None
+    try:
+        for chunk in stream:
+            if not chunk.choices:
+                continue
+
+            choice = chunk.choices[0]
+
+            if choice.finish_reason is not None:
+                finish_reason = choice.finish_reason
+
+            text = choice.delta.content
+            if text:
+                yield text
+    except (APIConnectionError, APIStatusError, APITimeoutError):
+        logger.exception("Stream interrupted while reading LLM response tokens")
+        raise LlmUnavailable("Network stream interrupted during generation")
+
+    if finish_reason != "stop":
+        raise LlmTruncated(f"Response stopped by {finish_reason}")
