@@ -11,6 +11,7 @@ from app.retrieval.search import search
 from app.generation.generate import (
     start_generate_answer,
     LlmUnavailable,
+    LlmTruncated,
     iter_answer_tokens,
 )
 from app.core.log_config import setup_logging
@@ -38,8 +39,20 @@ def sse(event, data):
 
 
 def event_stream(stream, sources):
-    for text in iter_answer_tokens(stream):
-        yield sse("token", {"t": text})
+    yield sse("sources", sources)
+    try:
+        for text in iter_answer_tokens(stream):
+            yield sse("token", {"t": text})
+    except LlmTruncated:
+        yield sse("done", {"truncated": True})
+        return
+    except LlmUnavailable:
+        yield sse(
+            "error",
+            {"detail": "Connection lost while generating answer. Please try again."},
+        )
+        return
+    yield sse("done", {"truncated": False})
 
 
 @app.get("/search")
