@@ -9,8 +9,10 @@ from app.core.config import (
     DEEPSEEK_BASE_URL,
     DEEPSEEK_MAX_TOKENS,
     DEEPSEEK_TIMEOUT,
+    REWRITE_TIMEOUT,
+    REWRITE_MAX_TOKENS,
 )
-from app.generation.prompts import SYSTEM_PROMPT
+from app.generation.prompts import SYSTEM_PROMPT, REWRITE_PROMPT
 
 
 class LlmUnavailable(Exception):
@@ -18,6 +20,10 @@ class LlmUnavailable(Exception):
 
 
 class LlmTruncated(Exception):
+    pass
+
+
+class RewriteUnavailable(Exception):
     pass
 
 
@@ -38,6 +44,43 @@ def build_user_message(query: str, chunks: list[dict]) -> str:
     context_block = "\n\n".join(formatted_chunks)
 
     return f"Контекст:\n{context_block}\n\nВопрос:\n{query}"
+
+
+def rewrite_query(query: str, history: list[dict]) -> str:
+
+    formatted_history = []
+    for idx, turn in enumerate(history[-3:], start=1):
+        question = turn["question"].strip()
+        formatted_history.append(f"[Question {idx}]\n{question}")
+
+    formatted_history.append(f"[Truncated Answer]\n{history[-1]['answer'][:400]}")
+    formatted_history.append(f"[Latest Query]\n{query.strip()}")
+
+    chat_context = "\n\n".join(formatted_history)
+
+    messages = [
+        {"role": "system", "content": REWRITE_PROMPT},
+        {"role": "user", "content": chat_context},
+    ]
+    try:
+        response = client.chat.completions.create(
+            model=DEEPSEEK_MODEL,
+            messages=messages,
+            extra_body={"thinking": {"type": "disabled"}},
+            max_tokens=REWRITE_MAX_TOKENS,
+            timeout=REWRITE_TIMEOUT,
+        )
+    except (APIConnectionError, APIStatusError, APITimeoutError):
+        logger.exception("Problem when rewritting user query")
+        raise RewriteUnavailable("DeepSeek unreachable during query rewrite")
+
+    rewritten = response.choices[0].message.content.strip()
+
+    if not rewritten:
+        logger.error("Answer from LLM empty")
+        raise RewriteUnavailable("Empty rewrite returned by model")
+
+    return rewritten
 
 
 def start_generate_answer(
