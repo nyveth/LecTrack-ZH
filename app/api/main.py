@@ -77,6 +77,16 @@ def search_endpoint(query: str, top_k: int = TOP_K):
             detail="We were unable to generate a response at this time. Please try again later.",
         )
 
+    sources_payload = [
+        {
+            "chunk_id": row["chunk_id"],
+            "video_id": row["video_id"],
+            "text": row["text"],
+            "chunk_start": row["chunk_start"],
+            "chunk_end": row["chunk_end"],
+        }
+        for row in filtered_results
+    ]
     return StreamingResponse(
-        event_stream(stream, filtered_results), media_type="text/event-stream"
+        event_stream(stream, sources_payload), media_type="text/event-stream"
     )

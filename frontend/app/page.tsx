@@ -8,7 +8,6 @@ type Source = {
   text: string;
   chunk_start: number;
   chunk_end: number;
-  distance: number;
 };
 
 type Frame = {
@@ -122,11 +121,7 @@ export default function Home() {
           if (!frame) continue;
 
           if (frame.event === "sources") {
-            const payload = frame.data as unknown;
-            const list = Array.isArray(payload)
-              ? (payload as Source[])
-              : ((payload as { sources?: Source[] }).sources ?? []);
-            setSources(list);
+            setSources(frame.data as unknown as Source[]);
           } else if (frame.event === "token") {
             const t = frame.data.t as string;
             setAnswer((prev) => prev + t);
