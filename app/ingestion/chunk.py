@@ -1,20 +1,20 @@
-import logging
 import json
+import logging
 import sys
+from collections import Counter
+from pathlib import Path
+
+from transformers import AutoTokenizer
 
 from app.core.config import (
-    MODEL_NAME,
-    TRANSCRIPTS_DIR,
-    TARGET_TOKENS,
     CHUNKS_DIR,
+    MODEL_NAME,
     OVERLAP_TOKENS,
+    TARGET_TOKENS,
+    TRANSCRIPTS_DIR,
 )
-from collections import Counter
-from transformers import AutoTokenizer
-from pathlib import Path
 from app.core.log_config import setup_logging
 from app.core.results import FileResult
-
 
 logger = logging.getLogger(__name__)
 

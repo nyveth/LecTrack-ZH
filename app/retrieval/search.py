@@ -1,12 +1,13 @@
-import sys
-import psycopg
 import logging
+import sys
 
-from psycopg.rows import dict_row
+import psycopg
 from pgvector.psycopg import register_vector
+from psycopg.rows import dict_row
 from sentence_transformers import SentenceTransformer
+
+from app.core.config import DATABASE_URL, DISTANCE_THRESHOLD, MODEL_NAME, TOP_K
 from app.core.log_config import setup_logging
-from app.core.config import MODEL_NAME, TOP_K, DATABASE_URL, DISTANCE_THRESHOLD
 
 logger = logging.getLogger(__name__)
 

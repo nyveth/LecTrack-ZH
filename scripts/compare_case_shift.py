@@ -1,4 +1,5 @@
 import json
+
 import psycopg
 from pgvector.psycopg import register_vector
 from sentence_transformers import SentenceTransformer
@@ -6,8 +7,8 @@ from sentence_transformers import SentenceTransformer
 from app.core.config import (
     BASE_DIR,
     DATABASE_URL,
-    MODEL_NAME,
     DISTANCE_THRESHOLD,
+    MODEL_NAME,
 )
 from app.retrieval.search import search
 

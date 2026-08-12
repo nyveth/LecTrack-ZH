@@ -1,13 +1,14 @@
-import logging
 import json
-import psycopg
+import logging
 import sys
-
 from collections import Counter
-from app.core.log_config import setup_logging
-from sentence_transformers import SentenceTransformer
-from app.core.config import MODEL_NAME, DATABASE_URL, CHUNKS_DIR
+
+import psycopg
 from pgvector.psycopg import register_vector
+from sentence_transformers import SentenceTransformer
+
+from app.core.config import CHUNKS_DIR, DATABASE_URL, MODEL_NAME
+from app.core.log_config import setup_logging
 from app.core.results import FileResult
 
 logger = logging.getLogger(__name__)

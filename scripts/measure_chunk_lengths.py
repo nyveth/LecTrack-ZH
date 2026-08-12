@@ -1,10 +1,10 @@
 import json
 import statistics
 
-from app.core.config import TRANSCRIPTS_DIR, TARGET_TOKENS, OVERLAP_TOKENS
-from transformers import AutoTokenizer
 from sentence_transformers import SentenceTransformer
+from transformers import AutoTokenizer
 
+from app.core.config import OVERLAP_TOKENS, TARGET_TOKENS, TRANSCRIPTS_DIR
 from app.ingestion.chunk import chunk_transcript
 
 
