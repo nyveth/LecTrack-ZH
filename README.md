@@ -24,6 +24,7 @@ timestamps let the user verify it against the video.*
 | DB driver     | psycopg 3 (synchronous)                  |
 | Generation    | DeepSeek via the `openai` SDK            |
 | API           | FastAPI + uvicorn                        |
+| Transport     | Server-Sent Events (token streaming)     |
 | Frontend      | Next.js (App Router, TypeScript, Tailwind) |
 | Lint          | ruff                                     |
 | Tests         | pytest                                   |
@@ -160,7 +161,20 @@ it returns `authentication_error`.
 
 Non-secret constants live in `app/core/config.py`, not in `.env`:
 `TARGET_TOKENS`, `OVERLAP_TOKENS`, `MODEL_NAME`, `TOP_K`, `DISTANCE_THRESHOLD`,
-`DEEPSEEK_BASE_URL`, `DEEPSEEK_MODEL`, `DEEPSEEK_MAX_TOKENS` `DEEPSEEK_TIMEOUT`.
+`DEEPSEEK_BASE_URL`, `DEEPSEEK_MODEL`, `DEEPSEEK_MAX_TOKENS`, `DEEPSEEK_TIMEOUT`,
+`REWRITE_TIMEOUT`.
+
+The frontend reads one variable of its own, from `frontend/.env.local`:
+
+| Variable              | Example                 | Notes                          |
+|-----------------------|-------------------------|--------------------------------|
+| `NEXT_PUBLIC_API_URL` | `http://127.0.0.1:8000` | optional; falls back to that value |
+
+`NEXT_PUBLIC_` is not decoration: Next.js inlines only variables carrying that
+prefix into the browser bundle. The value is therefore public by construction
+and must never hold a secret. It has a fallback in code, so local development
+needs no `.env.local` at all — the file exists for deployment, where the API is
+not on the same host as the page.
 
 `DISTANCE_THRESHOLD` is corpus-specific and is not a portable constant — see
 [Evaluation](#evaluation).
@@ -196,6 +210,12 @@ cd frontend
 npm install
 ```
 
+Optional, for a non-local API host:
+
+```bash
+echo 'NEXT_PUBLIC_API_URL=https://api.example.com' > frontend/.env.local
+```
+
 ## Pipeline
 
 Run every stage from the repository root as a module:
@@ -206,7 +226,7 @@ python3 -m app.ingestion.chunk             # transcript  → overlapping chunks 
 python3 -m app.ingestion.embed             # chunks      → pgvector rows
 python3 -m app.retrieval.search "查询内容"   # query       → ranked chunks above threshold
 python3 -m scripts.eval_queries            # query set   → measurement table
-uv run uvicorn app.api.main:app --reload   # HTTP        → JSON: answer + sources
+uv run uvicorn app.api.main:app --reload   # HTTP        → SSE: sources + answer tokens
 ```
 
 Frontend, from `frontend/` in a second shell:
@@ -316,13 +336,25 @@ Decisions:
 
 `app/generation/` turns retrieved chunks into an answer. Two modules:
 
-- `prompts.py` — string constants only. No imports, no functions, no file reads.
-- `generate.py` — `build_user_message()` assembles the chunks and the question
-  into one text; `generate_answer()` makes the API call and returns the reply.
+- `prompts.py` — string constants only (`SYSTEM_PROMPT`, `REWRITE_PROMPT`). No
+  imports, no functions, no file reads.
+- `generate.py` — `build_user_message()` assembles history, chunks and the
+  question into one text; `start_generate_answer()` opens the streamed call;
+  `iter_answer_tokens()` yields the pieces; `rewrite_query()` turns a
+  follow-up into a standalone query.
 
 ```python
-generate_answer(query: str, chunks: list[dict]) -> str
+rewrite_query(query: str, history: list[dict]) -> str
+start_generate_answer(query: str, chunks: list[dict], history: list[dict])
+iter_answer_tokens(stream) -> Iterator[str]
 ```
+
+The answer is streamed, not returned whole. A full answer takes seconds of
+provider time; with a single return the user watches a spinner for all of it,
+and the first token is the only signal that the pipeline is alive. Streaming
+also changes the failure surface: the status code is committed the moment the
+response starts, so anything that can fail with a status has to fail *before*
+the first byte — see [API](#api).
 
 Decisions:
 
@@ -370,14 +402,6 @@ Decisions:
   query → Russian, English query → English, Chinese query → Chinese. The only
   case the prompt ever decided was the one where it agreed with nothing —
   and rewriting it flipped exactly that case. The instruction sets a
-  probability; the query and the retrieved context set the rest. - **The answer
-  language follows the query language; the prompt barely
-  influences it.** Measured across two prompt configurations. With the system
-  prompt written in Russian: Russian query → Russian, English query → Russian,
-  Chinese query → Chinese. After rewriting the prompt in English: Russian
-  query → Russian, English query → English, Chinese query → Chinese. The only
-  case the prompt ever decided was the one where it agreed with nothing —
-  and rewriting it flipped exactly that case. The instruction sets a
   probability; the query and the retrieved context set the rest. A later
   counterexample breaks the rule: an English question about a medical topic
   returned an answer entirely in Chinese, the language of the corpus, while an
@@ -388,6 +412,22 @@ Decisions:
   the user gets an answer in the language they asked in — but it is emergent
   and demonstrably not guaranteed: anything that must hold has to hold in code,
   and a post-generation language check does not exist yet.
+- **History goes to generation; the rewritten query goes to retrieval.** Two
+  different needs. Retrieval needs one self-contained string, because an
+  embedding of "and the second one" points nowhere. Generation needs the
+  conversation, because "can you say that shorter" is a request about the
+  previous answer, not a question about the corpus — a standalone query
+  preserves referents but not the dialogue. `build_user_message()` therefore
+  emits `[History]` (the last two questions plus the last answer in full),
+  then `[Context]`, then the current `[Question]` last.
+- **The `[History]` block is absent, not empty, on the first turn.** An empty
+  labelled section is a prompt telling the model that a conversation exists and
+  contained nothing.
+- **Error accumulation inside history is bounded by the prompt, not by code.**
+  A wrong answer stays in the window and can be cited by the next one. One line
+  in `SYSTEM_PROMPT` separates the roles: history is for understanding the
+  question, facts come from `[Context]`. That is a request, not a mechanism —
+  see the language limitation above for what that distinction is worth.
 - **The timeout is derived from the output ceiling, not from expected load.**
   `DEEPSEEK_TIMEOUT = 30.0` measures the duration of a single provider call.
   Concurrency does not enter the calculation: requests queue *before* the call
@@ -396,6 +436,41 @@ Decisions:
   for exactly as long as the timeout allows. Basis: 6 measured calls, longest
   6–7 s, none of which reached the 1000-token cap; extrapolated to a full cap
   that is roughly 15 s, and 30 leaves a 2× margin for provider tail latency.
+
+## Multi-turn
+
+A follow-up question is rarely self-contained. "And how is it measured?" embeds
+into a vector that points at nothing in particular; the threshold then rejects
+every chunk and the user reads "nothing found" about material that is in the
+corpus. Before retrieval, `rewrite_query()` sends the last three turns and the
+new question to the provider and asks for one standalone query.
+
+Decisions:
+
+- **Rewriting is a separate call, not part of generation.** Its output feeds
+  `search()`, which runs before generation exists. Cost: roughly 1.3 s measured
+  per call, paid on every turn after the first.
+- **`REWRITE_PROMPT` forbids expansion.** The instruction is to resolve
+  references and nothing else — no added synonyms, no clarifying terms. The
+  reason is numeric: `DISTANCE_THRESHOLD` was calibrated with a margin of 0.029
+  (see [Evaluation](#evaluation)), and a query enriched with plausible-sounding
+  extra terms moves in vector space by more than that.
+- **The format label in the prompt matches the code literally.** The prompt
+  describes the exact markers `build_user_message()` writes. A prompt describing
+  a format the code does not produce is a silent defect: the call still returns
+  something.
+- **An empty rewrite is rejected by an `if`, not by an `except`.** The provider
+  returning an empty string is a successful call that fails the task criterion.
+  It raises the same domain exception, `RewriteUnavailable`, as the three
+  `openai` transport failures.
+- **`REWRITE_TIMEOUT` is separate from `DEEPSEEK_TIMEOUT` and much shorter**
+  (5 s against 30 s). Rewriting emits a single short line, so its expected
+  duration is a fraction of a full answer's; the same clock for both would let a
+  stalled rewrite hold a worker for the length of a generation.
+- **The rewritten query is not logged next to the original.** Known gap. When
+  retrieval returns less than expected, there is currently no way to tell
+  whether the rewrite or the threshold caused it — see
+  [Known limitations](#known-limitations).
 
 ## API
 
@@ -413,12 +488,25 @@ and needs the app object named. Interactive docs at `http://127.0.0.1:8000/docs`
 
 | | |
 |---|---|
-| Route        | `GET /search` |
-| Query params | `query` (required, non-blank), `top_k` (defaults to `TOP_K`) |
-| `200`        | `{"answer": str, "sources": [chunk, ...]}` |
-| `200`, no match | `{"answer": "", "sources": []}` — same shape, empty values |
-| `400`        | blank or whitespace-only `query` |
-| `503`        | LLM provider failed; retrieval result is discarded |
+| Route        | `POST /search` |
+| Body         | `{"query": str, "history": [{"question": str, "answer": str}], "top_k": int}` |
+| `200`        | `text/event-stream` — see the frame table below |
+| `200`, no match | the same stream: a `sources` frame carrying `[]`, then `done` |
+| `422`        | body fails validation (length, type, missing field) |
+| `503`        | query rewriting unavailable — raised before the stream opens |
+
+Constraints are declared on the pydantic models, not checked in the handler:
+`query` non-blank and ≤ 500 characters, `history` ≤ 10 turns, `top_k` between
+1 and 20.
+
+Stream frames:
+
+| Event     | Data                                | When |
+|-----------|-------------------------------------|------|
+| `sources` | the chunk list (possibly empty)      | once, first |
+| `token`   | `{"t": "..."}`                       | repeatedly |
+| `done`    | `{"truncated": bool}`                | once, last |
+| `error`   | `{"detail": str}`                    | instead of `done`, if generation breaks mid-answer |
 
 Each `chunk` in `sources` carries `chunk_id`, `video_id`, `text`, `chunk_start`,
 `chunk_end`, `distance` — the raw row from `search()`, deliberately unfiltered
@@ -427,12 +515,35 @@ consumer).
 
 Decisions:
 
+- **`POST`, not `GET`.** The request carries a nested list of turns. A query
+  string encodes flat scalars; nesting it means inventing an encoding and
+  paying for it at both ends, against a URL length limit that is not in the
+  standard but is enforced by proxies.
+- **Typed models, not `list[dict]`.** `Message` and `SearchRequest` are pydantic
+  models, so a malformed turn is rejected at the boundary with a `422` naming
+  the offending index and field, and the handler body never runs. With
+  `list[dict]` the same input reaches business logic and surfaces as a
+  `KeyError` several frames deep, at a place that has no idea what a valid
+  request looks like.
+- **Conversion to plain dicts happens at the boundary.** `model_dump()` is
+  called in the endpoint, so `generate.py` receives dictionaries and does not
+  import the API's schema. The direction of dependency stays one-way: the API
+  knows about generation, generation knows nothing about HTTP.
+- **The empty result is still a stream.** "Nothing found" could have been a
+  plain JSON body, which would force the client to branch on content type
+  before it can read anything. Instead the endpoint returns a stream carrying
+  `sources: []` and `done`. One reading path, one code path in the client.
+- **A failure that has a status code must happen before the first byte.** Once
+  a `StreamingResponse` starts, the status is already sent and cannot be
+  changed. Rewriting therefore runs *before* the response is constructed, so
+  `RewriteUnavailable` can still become an honest `503`. A generation failure
+  after the stream opens has no such option and is delivered as an `error`
+  frame instead.
 - **The response shape is constant across outcomes.** "Found" and "found
-  nothing" differ in content, not in structure: the client reads `answer` and
-  `sources` unconditionally and detects emptiness by content. Distinguishable
-  outcomes that need distinguishable *handling* get distinguishable signals
-  instead — `400` and `503` are separate statuses, not sentinel values inside a
-  `200`.
+  nothing" differ in content, not in structure: the client reads the same
+  frames either way. Distinguishable outcomes that need distinguishable
+  *handling* get distinguishable signals instead — `422` and `503` are separate
+  statuses, not sentinel values inside a `200`.
 - **An empty retrieval result exits before generation.** The LLM call is paid
   and there is nothing to generate from; the early return costs zero API calls.
 - **Provider failure maps to `503`, not `500`.** `500` means a bug in this
@@ -467,24 +578,54 @@ Decisions:
   there are no API tests yet. It goes in when they exist, not before.
 - **The threshold is applied here, not in the client.** It is calibrated
   against the corpus, so it belongs next to the data.
+- **CORS allows `POST` and `OPTIONS`, not just `POST`.** A cross-origin `POST`
+  carrying JSON is not a simple request: the browser sends an `OPTIONS`
+  preflight first and only issues the real call if it succeeds. A missing
+  `OPTIONS` shows up as a `POST` that never appears in the access log while the
+  `OPTIONS` does — a symptom that points at the handler and is not in the
+  handler.
 - **CORS is enabled for the local Next.js origin only.**
 
 ## Frontend
 
-A single-page interface in English: query box, Enter to submit, a generated
-answer block, and the source chunks with video timestamps underneath. Blank
-queries are blocked before `fetch`. Non-2xx responses render an error banner
-from the response's `detail`; a network-level failure (server down) gets its
-own message via `catch`. State is reset at the start of every search, so an
-error from one request cannot survive into the rendering of the next.
+A chat interface in English: a conversation of turns, tokens appearing as they
+arrive, retrieved chunks folded under each answer, and several conversations
+kept side by side.
 
 ```bash
 cd frontend
 npm run dev
 ```
 
-The API base URL is currently hardcoded — see
-[Known limitations](#known-limitations).
+Decisions:
+
+- **Misses are shown but not sent.** A turn whose retrieval returned nothing —
+  and a turn whose stream broke mid-answer — stays on screen, because a message
+  that vanishes is worse than a message that failed. Neither is included in the
+  `history` sent with the next request: an empty or half-delivered answer is a
+  corrupted referent, and `rewrite_query()` would resolve the next pronoun
+  against it. The filter runs at send time; nothing is deleted from state.
+  Accepted cost, stated plainly: after a miss, a pronoun in the next question
+  resolves against the last *successful* turn, which is usually right and is
+  silently wrong when it is not.
+- **Conversations live in `localStorage`.** There is no auth, so there is no
+  account to attach them to, and losing a thread to a page refresh is not
+  acceptable. `localStorage` does not exist during server rendering, so it is
+  read in an effect after mount, never in a `useState` initializer — the latter
+  produces server markup that does not match the client. A hydration flag
+  guards the save effect, or the first render writes an empty array over the
+  saved data.
+- **Tokens are accumulated in a local variable, not read back from state.**
+  A state value read inside the streaming loop is the value captured when the
+  closure was created, not what the setter has painted since. State drives the
+  screen; a plain variable assembles the record that is stored at the end.
+- **The stream is decoded with `stream: true` and split on a blank line.**
+  A Chinese character is three bytes and can be cut across two network chunks;
+  the flag holds an incomplete character back rather than emitting a
+  replacement glyph. Frames are separated by `\n\n`, so the trailing piece of
+  every read is kept in a buffer until its boundary arrives.
+- **The API base URL comes from `NEXT_PUBLIC_API_URL`,** with a localhost
+  fallback so a fresh clone runs without configuration.
 
 ## Evaluation
 
@@ -615,9 +756,10 @@ root, never as a bare script path.
 | embed      | ✓ BGE-M3 → pgvector, one transaction per video, rollback verified |
 | retrieval  | ✓ exact cosine scan, calibrated cutoff, CLI entry point           |
 | evaluation | ✓ fixed multilingual query set, mechanical term check             |
-| API        | ✓ GET /search, threshold applied, interactive docs                |
-| frontend   | ✓ search box, answer block, sources list, error states            |
-| generation | ✓ wired into /search: error boundary, truncation check, logged failures |
+| API        | ✓ POST /search, SSE streaming, typed request models, threshold applied |
+| generation | ✓ error boundary, truncation check, logged failures, token streaming |
+| multi-turn | ✓ query rewriting before retrieval; threshold benchmark **not run** |
+| frontend   | ✓ chat UI, streamed tokens, local conversations, folded sources   |
 
 ## Known limitations
 
@@ -648,9 +790,32 @@ root, never as a bare script path.
   results of which two were largely the same passage. Input tokens are paid for
   all five, and `max_tokens` does not cap input.
 
-- **The frontend hardcodes `http://127.0.0.1:8000`** in its `fetch` call. It
-  works for local development and blocks any deployment where the API is not on
-  the same host.
+- **Multi-turn is not validated against the calibrated threshold.** Rewriting
+  produces a different string, therefore a different vector, therefore
+  different distances — and `DISTANCE_THRESHOLD` was calibrated on human
+  phrasings with a margin of 0.029. Observed directly: the *same* question
+  asked with an empty history returned 5 chunks and, asked again with history
+  present, returned 1. The answer to the one-chunk version reads perfectly
+  well; it has simply lost the specifics the other four carried. That is the
+  failure mode of this whole class — retrieval degrades into a fluent answer,
+  not into an error. The benchmark over rewritten queries has not been run, so
+  the size of the effect is unknown.
+
+- **The rewrite alters wording beyond what the prompt allows.** Observed: a
+  question containing a mis-typed term came back with the term corrected. The
+  correction was right, and it is still an edit the instruction forbids, which
+  means the constraint holds by disposition rather than by construction. Its
+  effect on distance is unmeasured.
+
+- **The rewritten query is not logged.** Only the original question and the
+  final chunk count are visible, so a thin result cannot be attributed to
+  either the rewrite or the threshold without guessing. This blocks the
+  benchmark above more than it blocks the product.
+
+- **The "no answer in the corpus" path is untested.** Every candidate question
+  tried so far was cut by the threshold before generation ran, so the prompt's
+  behaviour when it has context but no answer — and the separation between the
+  `[History]` and `[Context]` blocks — has never actually executed.
 
 - **ASR mangles domain terminology, and a larger model does not fix it.**
   On Chinese technical lecture audio, whisper substitutes homophones: the
@@ -764,11 +929,43 @@ root, never as a bare script path.
 - **The connection is opened at import and never reopened.** If PostgreSQL
   restarts, or the connection drops, the API process must be restarted with it.
 
-- **A hanging LLM call holds a threadpool worker.** The DeepSeek call is
-  synchronous and currently has no timeout, so a slow provider occupies its
-  worker for the full duration. Combined with the single DB connection, a
-  handful of such requests leaves the API unresponsive while the process is
-  alive and the port is open.
+- **A hanging LLM call holds a threadpool worker for the length of its
+  timeout.** The DeepSeek call is synchronous, so a slow provider occupies its
+  worker until `DEEPSEEK_TIMEOUT` (30 s) expires, and a stalled rewrite until
+  `REWRITE_TIMEOUT` (5 s). Both are bounded now, which the SDK default of 600 s
+  was not; combined with the single DB connection, a burst of slow requests
+  still leaves the API unresponsive while the process is alive and the port is
+  open.
+
+- **A conversation grows the prompt every turn.** `[History]` carries the last
+  two questions and the last answer in full, so input tokens per request rise
+  with the length of the thread. Nothing truncates by token count — the bound
+  is a turn count, which is a proxy, not a limit.
+
+- **Provider disconnection mid-stream is untested.** The three `openai`
+  exception classes are caught around `iter_answer_tokens()`, but the branch
+  has never been triggered against a real interruption; only the timeout path
+  was forced and observed.
+
+## Rejected alternatives
+
+Options considered and turned down, with the reason. Kept because the reasons
+are the argument; the list is what stops a decision from being re-opened every
+time it feels inconvenient.
+
+| Option | Rejected because |
+|---|---|
+| LangChain | The pipeline is four explicit stages; a framework would hide exactly the parts this project exists to demonstrate. |
+| IVFFlat / HNSW | An approximate index trades recall for speed and changes the answer, not just the time. At 29 chunks the exact scan *is* the ground truth. Revisit above ~500 chunks. |
+| Two standalone queries instead of history in generation | A standalone query preserves referents but not the conversation: "say that shorter" and "no, I meant the second one" have nothing to attach to. |
+| Sending misses in the conversation history | An empty or half-delivered answer becomes the referent the next pronoun resolves against. |
+| Server-side conversation storage | Requires auth, which does not exist. `localStorage` costs nothing and survives a refresh. |
+| A right-hand sources column | Sources belong under the answer they support; a separate column forces the eye to bind them by position. |
+| Async rewriting | The rewrite is on the critical path before retrieval; concurrency buys nothing when nothing else can start. |
+| Open registration | Free registration caps no spend. Spend is capped by a per-IP rate limit and a global daily ceiling, which is a separate mechanism. |
+| Hosted CPU transcription | Tens of minutes per lecture — worse than not offering the feature. |
+| A tunnel to the local machine | The public link dies whenever the machine is off. |
+| Docker before the public deployment | One target host, one deploy. Containerisation is work that buys nothing until there is a second environment. |
 
 ---
 
