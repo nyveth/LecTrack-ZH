@@ -1,18 +1,18 @@
 import logging
 
-from openai import OpenAI, APIConnectionError, APITimeoutError, APIStatusError, Stream
+from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI, Stream
 from openai.types.chat import ChatCompletionChunk
 
 from app.core.config import (
-    DEEPSEEK_MODEL,
     DEEPSEEK_API_KEY,
     DEEPSEEK_BASE_URL,
     DEEPSEEK_MAX_TOKENS,
+    DEEPSEEK_MODEL,
     DEEPSEEK_TIMEOUT,
-    REWRITE_TIMEOUT,
     REWRITE_MAX_TOKENS,
+    REWRITE_TIMEOUT,
 )
-from app.generation.prompts import SYSTEM_PROMPT, REWRITE_PROMPT
+from app.generation.prompts import REWRITE_PROMPT, SYSTEM_PROMPT
 
 
 class LlmUnavailable(Exception):
@@ -33,17 +33,28 @@ client = OpenAI(
 logger = logging.getLogger(__name__)
 
 
-def build_user_message(query: str, chunks: list[dict]) -> str:
+def build_user_message(query: str, chunks: list[dict], history: list[dict]) -> str:
     """Combines the question and the chunks into a single text for the model."""
     formatted_chunks = []
+    formatted_history = []
+    if history:
+        for idx, turn in enumerate(history[-2:], start=1):
+            question = turn["question"].strip()
+            formatted_history.append(f"[Question {idx}]\n{question}")
+        formatted_history.append(f"[Answer {idx}]\n{history[-1]['answer']}")
 
     for idx, chunk in enumerate(chunks, start=1):
         text = chunk["text"].strip()
-        formatted_chunks.append(f"[Фрагмент{idx}]\n{text}")
+        formatted_chunks.append(f"[Fragment {idx}]\n{text}")
 
+    history_block = "\n\n".join(formatted_history)
     context_block = "\n\n".join(formatted_chunks)
 
-    return f"Контекст:\n{context_block}\n\nВопрос:\n{query}"
+    message = f"[Context]:\n{context_block}\n\n[Question]:\n{query}"
+
+    if history:
+        message = f"[History]:\n{history_block}\n\n" + message
+    return message
 
 
 def rewrite_query(query: str, history: list[dict]) -> str:
@@ -84,10 +95,10 @@ def rewrite_query(query: str, history: list[dict]) -> str:
 
 
 def start_generate_answer(
-    query: str, chunks: list[dict]
+    query: str, chunks: list[dict], history: list[dict]
 ) -> Stream[ChatCompletionChunk]:
     """Generates the model's text response based on the question and context chunks."""
-    user_content = build_user_message(query, chunks)
+    user_content = build_user_message(query, chunks, history)
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
