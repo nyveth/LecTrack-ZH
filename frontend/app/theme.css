@@ -1,0 +1,628 @@
+/* ─────────────────────────────────────────────────────────────────────
+   LecTrack-ZH theme. Replaces the Industry design system: warm paper
+   ground, soft radii, motion on hover. Every value the UI uses lives
+   here as a variable — page.tsx should never carry a raw hex.
+   ───────────────────────────────────────────────────────────────────── */
+
+/* Chinese only. Inter Tight (loaded in layout.tsx) has no CJK glyphs, so
+   without this every Chinese character falls through to whatever the OS
+   happens to ship — a different face from the rest of the interface, and
+   a different one on every machine. Google slices CJK by unicode-range,
+   so a page showing a few hundred characters fetches a few small files
+   rather than the whole 5 MB family. */
+@import url("https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600&display=swap");
+
+:root {
+    /* ground */
+    --bg: #dad5c6;
+    --panel: #f4f2ea;
+    --sidebar: rgba(226, 222, 209, 0.72);
+    --card: #faf9f4;
+    --card-lift: #ffffff;
+    --pill: #e6e2d6;
+
+    /* ink */
+    --text: #2a2723;
+    --text-soft: #6e675c;
+    --text-muted: #8a8378;
+    --on-accent: #f7f5ef;
+
+    /* accent */
+    --accent: #6b6150;
+    --accent-hover: #7c7160;
+    --accent-press: #5a5142;
+    --accent-deep: #4e4638;
+    --accent-light: #7e7361;
+    --accent-flat: #c4beae;
+
+    /* signal */
+    --ok: #7e9370;
+    --warn: #9a7a4e;
+    --danger: #8f5344;
+
+    /* lines */
+    --line: rgba(42, 39, 35, 0.1);
+    --line-soft: rgba(42, 39, 35, 0.08);
+    --line-strong: rgba(42, 39, 35, 0.14);
+
+    /* geometry */
+    --r-sm: 6px;
+    --r-md: 9px;
+    --r-lg: 12px;
+    --r-xl: 20px;
+    --r-pill: 999px;
+
+    --shadow-sm: 0 1px 3px rgba(42, 39, 35, 0.06);
+    --shadow-md: 0 4px 14px rgba(78, 70, 56, 0.14);
+    --shadow-lg: 0 6px 18px rgba(78, 70, 56, 0.1);
+
+    /* one easing for every interaction, so nothing feels out of family */
+    --ease: cubic-bezier(0.2, 0.8, 0.3, 1);
+    --dur: 0.22s;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+    letter-spacing: -0.1px;
+}
+
+::selection {
+    background: rgba(107, 97, 80, 0.2);
+}
+
+/* The global rule tints selection with the accent, which is also the
+   user bubble's own background — selecting text there produced accent
+   on accent and looked like nothing happened. Inside the bubble the
+   selection inverts instead. */
+.bubble-user::selection,
+.bubble-user *::selection {
+    background: rgba(255, 255, 255, 0.34);
+    color: #ffffff;
+}
+
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(42, 39, 35, 0.18);
+    border-radius: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+:focus {
+    outline: none;
+}
+
+:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+@keyframes blink {
+
+    0%,
+    100% {
+        opacity: 0.2;
+    }
+
+    50% {
+        opacity: 1;
+    }
+}
+
+/* ── brand mark ─────────────────────────────────────────────────── */
+
+.mark {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    background: linear-gradient(160deg, var(--accent-light), var(--accent-deep));
+    color: #f5f3ec;
+    font-weight: 600;
+}
+
+/* ── the mark ───────────────────────────────────────────────────────
+   Three stacked bars — a transcript seen from far away. At rest they
+   sit at fixed opacities. While a search runs, a light sweeps left to
+   right across the tile and the bars answer it in sequence, so the
+   thing that is moving is the same object that represents the corpus,
+   not a spinner bolted next to it. */
+
+.mark-tile {
+    position: relative;
+    display: grid;
+    place-items: center;
+    flex: none;
+    overflow: hidden;
+    background: linear-gradient(160deg, var(--accent-light), var(--accent-deep));
+}
+
+.mark-bar {
+    fill: var(--on-accent);
+}
+
+.mark-tile[data-active="true"] .mark-bar {
+    animation: mark-pulse 1.15s ease-in-out infinite;
+}
+
+/* Staggered so the bars read top-to-bottom, like a line being scanned. */
+.mark-tile[data-active="true"] .mark-bar:nth-child(2) {
+    animation-delay: 0.16s;
+}
+
+.mark-tile[data-active="true"] .mark-bar:nth-child(3) {
+    animation-delay: 0.32s;
+}
+
+.mark-sweep {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    background: linear-gradient(100deg,
+            transparent 35%,
+            rgba(255, 255, 255, 0.42) 50%,
+            transparent 65%);
+}
+
+.mark-tile[data-active="true"] .mark-sweep {
+    opacity: 1;
+    animation: mark-sweep 1.15s linear infinite;
+}
+
+@keyframes mark-pulse {
+
+    0%,
+    100% {
+        opacity: 0.35;
+    }
+
+    45% {
+        opacity: 1;
+    }
+}
+
+@keyframes mark-sweep {
+    from {
+        transform: translateX(-100%);
+    }
+
+    to {
+        transform: translateX(100%);
+    }
+}
+
+/* ── source cards ───────────────────────────────────────────────────
+   The card is a div, not a button: text inside a <button> cannot be
+   selected, which is why the Chinese was impossible to copy. The
+   header row is the clickable part; the transcript below is plain,
+   selectable text. */
+
+.src-head {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    width: 100%;
+    padding: 0;
+    border: none;
+    background: transparent;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.src-copy {
+    flex: none;
+    padding: 3px 8px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    background: transparent;
+    font: inherit;
+    font-size: 11px;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition:
+        background var(--dur),
+        color var(--dur),
+        border-color var(--dur);
+}
+
+.src-copy:hover {
+    background: var(--card-lift);
+    border-color: var(--line-strong);
+    color: var(--text);
+}
+
+.src-text {
+    margin: 8px 0 0;
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: var(--text-soft);
+    white-space: pre-wrap;
+    /* Explicit, because a parent's cursor:pointer makes text look
+     unselectable even when it is not. */
+    cursor: text;
+    user-select: text;
+}
+
+/* Collapsed state still shows the first line, so a folded card is a
+   recognisable quote rather than a bare timestamp. */
+.src-preview {
+    margin: 6px 0 0;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ── buttons ────────────────────────────────────────────────────── */
+
+.btn {
+    border: none;
+    cursor: pointer;
+    font: inherit;
+    font-weight: 500;
+    color: var(--text);
+    background: transparent;
+    border-radius: var(--r-md);
+    transition:
+        transform var(--dur) var(--ease),
+        background var(--dur),
+        box-shadow var(--dur),
+        color var(--dur);
+}
+
+.btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.btn-primary {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    height: 34px;
+    background: var(--accent);
+    color: var(--on-accent);
+    font-size: 13.5px;
+}
+
+.btn-primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+    transform: scale(1.035);
+    box-shadow: var(--shadow-md);
+}
+
+.btn-primary:active:not(:disabled) {
+    background: var(--accent-press);
+    transform: scale(0.985);
+}
+
+/* The send control: a disc that only fills once there is something to
+   send, so the affordance itself reports draft state. */
+.btn-send {
+    width: 32px;
+    height: 32px;
+    flex: none;
+    border-radius: var(--r-pill);
+    background: var(--accent-flat);
+    color: var(--on-accent);
+    font-size: 15px;
+    line-height: 1;
+}
+
+.btn-send[data-ready="true"] {
+    background: var(--accent);
+}
+
+.btn-send:hover:not(:disabled) {
+    transform: scale(1.1);
+}
+
+.btn-send:active:not(:disabled) {
+    transform: scale(0.94);
+}
+
+.btn-quiet {
+    padding: 3px 8px;
+    font-size: 11.5px;
+    color: var(--text-muted);
+    border-radius: var(--r-sm);
+}
+
+.btn-quiet:hover:not(:disabled) {
+    background: rgba(107, 97, 80, 0.1);
+    color: var(--text);
+    transform: scale(1.04);
+}
+
+/* ── sidebar threads ────────────────────────────────────────────── */
+
+.thread {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    margin-bottom: 2px;
+    border-radius: var(--r-md);
+    cursor: pointer;
+    transition: background 0.18s;
+}
+
+.thread:hover {
+    background: rgba(107, 97, 80, 0.1);
+}
+
+.thread[data-on="true"] {
+    background: rgba(107, 97, 80, 0.16);
+}
+
+.thread-title {
+    font-size: 13px;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.thread-meta {
+    font-size: 11.5px;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.thread-x {
+    opacity: 0;
+    transition: opacity 0.15s;
+    letter-spacing: 1px;
+}
+
+/* The trigger also stays visible while its own menu is open, otherwise
+   the button vanishes the moment the pointer moves onto the menu. */
+.thread:hover .thread-x,
+.thread:has(.menu) .thread-x {
+    opacity: 1;
+}
+
+.thread-pin {
+    color: var(--accent);
+    font-size: 9px;
+    margin-right: 5px;
+    vertical-align: 1px;
+}
+
+.thread-input {
+    width: 100%;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-sm);
+    background: var(--card);
+    padding: 4px 7px;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+    outline: none;
+}
+
+/* ── row menu ───────────────────────────────────────────────────── */
+
+.menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    z-index: 40;
+    min-width: 132px;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    background: var(--card-lift);
+    box-shadow: var(--shadow-lg);
+}
+
+.menu-item {
+    text-align: left;
+    padding: 7px 9px;
+    border: none;
+    border-radius: var(--r-sm);
+    background: transparent;
+    font: inherit;
+    font-size: 13px;
+    color: var(--text);
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.menu-item:hover {
+    background: rgba(107, 97, 80, 0.1);
+}
+
+.menu-item-danger {
+    color: var(--danger);
+}
+
+.menu-item-danger:hover {
+    background: rgba(143, 83, 68, 0.1);
+}
+
+/* ── messages ───────────────────────────────────────────────────── */
+
+.bubble-user {
+    max-width: 78%;
+    padding: 11px 15px;
+    background: var(--accent);
+    color: var(--on-accent);
+    font-size: 14.5px;
+    line-height: 1.5;
+    /* The one asymmetric corner: it points the bubble back at its author
+     without needing a tail. */
+    border-radius: 18px 18px 4px 18px;
+    white-space: pre-wrap;
+}
+
+.bubble-bot {
+    font-size: 14.5px;
+    line-height: 1.62;
+    color: var(--text);
+    white-space: pre-wrap;
+}
+
+.caret {
+    display: inline-block;
+    width: 7px;
+    height: 15px;
+    margin-left: 2px;
+    vertical-align: -2px;
+    background: var(--text);
+    border-radius: 1px;
+    animation: blink 1s steps(1) infinite;
+}
+
+/* ── source cards ───────────────────────────────────────────────── */
+
+.src {
+    display: flex;
+    flex-direction: column;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    background: var(--card);
+    cursor: pointer;
+    text-align: left;
+    transition:
+        transform var(--dur) var(--ease),
+        background var(--dur),
+        border-color var(--dur),
+        box-shadow var(--dur);
+}
+
+.src:hover {
+    background: var(--card-lift);
+    border-color: var(--line-strong);
+    box-shadow: var(--shadow-lg);
+}
+
+.src-time {
+    flex: none;
+    height: 20px;
+    padding: 0 7px;
+    display: flex;
+    align-items: center;
+    border-radius: var(--r-sm);
+    background: var(--accent);
+    color: var(--on-accent);
+    font-size: 11px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.src-title {
+    font-size: 12.5px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.src-quote {
+    font-size: 12px;
+    line-height: 1.45;
+    margin-top: 2px;
+    color: var(--text-soft);
+}
+
+.src-quote[data-clamp="true"] {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ── composer ───────────────────────────────────────────────────── */
+
+.composer {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    padding: 6px 6px 6px 16px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-xl);
+    background: #fdfcf8;
+    box-shadow: var(--shadow-sm);
+    transition: border-color var(--dur), box-shadow var(--dur);
+}
+
+.composer:focus-within {
+    border-color: rgba(42, 39, 35, 0.26);
+    box-shadow: 0 2px 10px rgba(42, 39, 35, 0.08);
+}
+
+.composer textarea {
+    flex: 1;
+    border: none;
+    outline: none;
+    resize: none;
+    padding: 6px 0;
+    max-height: 140px;
+    font: inherit;
+    font-size: 14.5px;
+    line-height: 1.5;
+    color: var(--text);
+    background: transparent;
+}
+
+/* ── status pill ────────────────────────────────────────────────── */
+
+.pill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 26px;
+    padding: 0 10px;
+    border-radius: var(--r-pill);
+    background: var(--pill);
+    font-size: 12px;
+}
+
+.pill-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: var(--r-pill);
+    background: var(--ok);
+}
+
+/* ── notice ─────────────────────────────────────────────────────── */
+
+.notice {
+    padding: 9px 13px;
+    border: 1px solid rgba(143, 83, 68, 0.3);
+    border-radius: var(--r-lg);
+    background: rgba(143, 83, 68, 0.07);
+    color: var(--danger);
+    font-size: 12.5px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    * {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+    }
+}
