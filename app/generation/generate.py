@@ -12,7 +12,11 @@ from app.core.config import (
     REWRITE_MAX_TOKENS,
     REWRITE_TIMEOUT,
 )
-from app.generation.prompts import REWRITE_PROMPT, SYSTEM_PROMPT
+from app.generation.prompts import (
+    CRITICAL_LANGUAGE_INSTRUCTION,
+    REWRITE_PROMPT,
+    SYSTEM_PROMPT,
+)
 
 
 class LlmUnavailable(Exception):
@@ -34,27 +38,32 @@ logger = logging.getLogger(__name__)
 
 
 def build_user_message(query: str, chunks: list[dict], history: list[dict]) -> str:
-    """Combines the question and the chunks into a single text for the model."""
+    """Combines the question, context fragments, and history into a structured user message."""
     formatted_chunks = []
     formatted_history = []
+
     if history:
         for idx, turn in enumerate(history[-2:], start=1):
             question = turn["question"].strip()
             formatted_history.append(f"[Question {idx}]\n{question}")
-        formatted_history.append(f"[Answer {idx}]\n{history[-1]['answer']}")
+        formatted_history.append(f"[Answer {idx}]\n{history[-1]['answer'].strip()}")
 
     for idx, chunk in enumerate(chunks, start=1):
         text = chunk["text"].strip()
         formatted_chunks.append(f"[Fragment {idx}]\n{text}")
 
-    history_block = "\n\n".join(formatted_history)
-    context_block = "\n\n".join(formatted_chunks)
-
-    message = f"[Context]:\n{context_block}\n\n[Question]:\n{query}"
+    parts = []
 
     if history:
-        message = f"[History]:\n{history_block}\n\n" + message
-    return message
+        history_block = "\n\n".join(formatted_history)
+        parts.append(f"<history>\n{history_block}\n</history>")
+
+    context_block = "\n\n".join(formatted_chunks)
+    parts.append(f"<context>\n{context_block}\n</context>")
+    parts.append(f"<question>\n{query.strip()}\n</question>")
+
+    parts.append(CRITICAL_LANGUAGE_INSTRUCTION)
+    return "\n\n".join(parts)
 
 
 def rewrite_query(query: str, history: list[dict]) -> str:
