@@ -1,4 +1,5 @@
 import json
+import logging
 
 import psycopg
 from fastapi import FastAPI, HTTPException
@@ -21,6 +22,7 @@ from app.generation.generate import (
 from app.retrieval.search import search
 
 setup_logging()
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 app.add_middleware(
@@ -84,12 +86,16 @@ def search_endpoint(body: SearchRequest):
         )
 
     history_dicts = []
+    standalone_query = body.query
+    is_rewritten = False
+
     if not body.history:
         results = search(query=body.query, conn=conn, top_k=body.top_k, model=model)
     else:
         history_dicts = [turn.model_dump() for turn in body.history]
         try:
             standalone_query = rewrite_query(body.query, history_dicts)
+            is_rewritten = True
         except RewriteUnavailable:
             raise HTTPException(
                 status_code=503,
@@ -98,6 +104,15 @@ def search_endpoint(body: SearchRequest):
         results = search(
             query=standalone_query, conn=conn, top_k=body.top_k, model=model
         )
+
+    distances = [round(row["distance"], 4) for row in results]
+    logger.info(
+        "retrieval | query: '%s', standalone: '%s', rewritten: %s, distances: %s",
+        body.query.replace("\n", " "),
+        standalone_query.replace("\n", " "),
+        is_rewritten,
+        distances,
+    )
 
     filtered_results = [row for row in results if row["distance"] <= DISTANCE_THRESHOLD]
     if not filtered_results:
