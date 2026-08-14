@@ -87,7 +87,6 @@ def search_endpoint(body: SearchRequest):
 
     history_dicts = []
     standalone_query = body.query
-    is_rewritten = False
 
     if not body.history:
         results = search(query=body.query, conn=conn, top_k=body.top_k, model=model)
@@ -95,7 +94,6 @@ def search_endpoint(body: SearchRequest):
         history_dicts = [turn.model_dump() for turn in body.history]
         try:
             standalone_query = rewrite_query(body.query, history_dicts)
-            is_rewritten = True
         except RewriteUnavailable:
             raise HTTPException(
                 status_code=503,
@@ -106,11 +104,12 @@ def search_endpoint(body: SearchRequest):
         )
 
     distances = [round(row["distance"], 4) for row in results]
+    query_changed = standalone_query.strip() != body.query.strip()
     logger.info(
-        "retrieval | query: '%s', standalone: '%s', rewritten: %s, distances: %s",
+        "retrieval | query: '%s', standalone: '%s', query_changed: %s, distances: %s",
         body.query.replace("\n", " "),
         standalone_query.replace("\n", " "),
-        is_rewritten,
+        query_changed,
         distances,
     )
 
