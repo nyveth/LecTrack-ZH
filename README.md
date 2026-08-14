@@ -14,6 +14,10 @@ https://github.com/user-attachments/assets/330158a7-0056-46d7-b5bb-32151f0eee4a
 relevant chunks, DeepSeek generates the answer, and the sources with
 timestamps let the user verify it against the video.*
 
+*The recording predates the current frontend — the design system was replaced
+on 12 Aug. The public deployment scheduled for 01 Sep replaces this video with
+a live link.*
+
 ## Stack
 
 | Layer         | Tool                                     |
@@ -330,7 +334,6 @@ Decisions:
   `normalize_embeddings`. The source of truth is the model's `modules.json`, not
   the `encode()` signature. Independently, `<=>` is cosine distance and divides
   by both norms internally, so vector length cannot affect ranking here at all.
-  
 
 ## Generation
 
@@ -395,7 +398,15 @@ Decisions:
   `except`, and raises the same `LlmUnavailable`. Details (`status_code`,
   traceback) go to the log at the point of failure; the client receives one
   generic message, because the user's only recourse is to retry.
-- **The answer language follows the query language; the prompt barely
+- **The message is assembled as XML-tagged blocks, question last.** Since
+  14 Aug, `build_user_message()` emits `<history>` (the last two questions plus
+  the last answer in full), then `<context>`, then `<question>`, followed by an
+  explicit language instruction — answer in the language of `<question>`, do
+  not output Chinese unless the question is Chinese. The tags give the model an
+  unambiguous boundary between conversation, source text and the actual
+  question; the trailing instruction puts the language rule in the highest-
+  leverage position, the last thing the model reads before generating.
+- **The answer language usually follows the query language; the prompt barely
   influences it.** Measured across two prompt configurations. With the system
   prompt written in Russian: Russian query → Russian, English query → Russian,
   Chinese query → Chinese. After rewriting the prompt in English: Russian
@@ -403,30 +414,27 @@ Decisions:
   case the prompt ever decided was the one where it agreed with nothing —
   and rewriting it flipped exactly that case. The instruction sets a
   probability; the query and the retrieved context set the rest. A later
-  counterexample breaks the rule: an English question about a medical topic
-  returned an answer entirely in Chinese, the language of the corpus, while an
-  English question about the engineering material in the same corpus answered
-  in English. Two of three observed cases follow the query, one follows the
-  context; the mechanism behind the split is unknown and one observation is not
-  enough to name it. For this product the usual behaviour is the desired one —
-  the user gets an answer in the language they asked in — but it is emergent
-  and demonstrably not guaranteed: anything that must hold has to hold in code,
-  and a post-generation language check does not exist yet.
+  counterexample broke the rule: an English question over Chinese chunks
+  returned an answer entirely in Chinese, the language of the corpus. The
+  14 Aug message-layout change above was the response, and it flipped that
+  exact case: the same question now answers in English, and the English
+  benchmark runs that followed stayed in English throughout. One evening of
+  observations; Chinese and Russian queries have not been re-measured since
+  the change, and the trailing instruction is still a request, not a
+  mechanism — a post-generation language check does not exist.
 - **History goes to generation; the rewritten query goes to retrieval.** Two
   different needs. Retrieval needs one self-contained string, because an
   embedding of "and the second one" points nowhere. Generation needs the
   conversation, because "can you say that shorter" is a request about the
   previous answer, not a question about the corpus — a standalone query
-  preserves referents but not the dialogue. `build_user_message()` therefore
-  emits `[History]` (the last two questions plus the last answer in full),
-  then `[Context]`, then the current `[Question]` last.
-- **The `[History]` block is absent, not empty, on the first turn.** An empty
+  preserves referents but not the dialogue.
+- **The `<history>` block is absent, not empty, on the first turn.** An empty
   labelled section is a prompt telling the model that a conversation exists and
   contained nothing.
 - **Error accumulation inside history is bounded by the prompt, not by code.**
   A wrong answer stays in the window and can be cited by the next one. One line
   in `SYSTEM_PROMPT` separates the roles: history is for understanding the
-  question, facts come from `[Context]`. That is a request, not a mechanism —
+  question, facts come from `<context>`. That is a request, not a mechanism —
   see the language limitation above for what that distinction is worth.
 - **The timeout is derived from the output ceiling, not from expected load.**
   `DEEPSEEK_TIMEOUT = 30.0` measures the duration of a single provider call.
@@ -454,9 +462,13 @@ Decisions:
   references and nothing else — no added synonyms, no clarifying terms. The
   reason is numeric: `DISTANCE_THRESHOLD` was calibrated with a margin of 0.029
   (see [Evaluation](#evaluation)), and a query enriched with plausible-sounding
-  extra terms moves in vector space by more than that.
+  extra terms moves in vector space by more than that. Measured behaviour
+  against this constraint: the rewrite systematically compresses questions into
+  noun phrases — an edit the rule does not permit, and one that currently
+  *helps* retrieval — see
+  [the rewrite benchmark](#the-threshold-on-rewritten-queries).
 - **The format label in the prompt matches the code literally.** The prompt
-  describes the exact markers `build_user_message()` writes. A prompt describing
+  describes the exact markers `rewrite_query()` writes. A prompt describing
   a format the code does not produce is a silent defect: the call still returns
   something.
 - **An empty rewrite is rejected by an `if`, not by an `except`.** The provider
@@ -464,12 +476,20 @@ Decisions:
   It raises the same domain exception, `RewriteUnavailable`, as the three
   `openai` transport failures.
 - **`REWRITE_TIMEOUT` is separate from `DEEPSEEK_TIMEOUT` and much shorter**
-  (5 s against 30 s). Rewriting emits a single short line, so its expected
+  (10 s against 30 s). Rewriting emits a single short line, so its expected
   duration is a fraction of a full answer's; the same clock for both would let a
-  stalled rewrite hold a worker for the length of a generation.
-- **The rewritten query is not logged next to the original.** Known gap. When
-  retrieval returns less than expected, there is currently no way to tell
-  whether the rewrite or the threshold caused it — see
+  stalled rewrite hold a worker for the length of a generation. Observed once
+  on a live call: a rewrite hit the 10 s ceiling and surfaced as the pre-stream
+  `503`, so the value is not slack.
+- **The rewritten query is logged next to the original.** One `INFO` line per
+  request carries the original query, the standalone form, whether the text
+  actually changed, and the raw distances *before* threshold filtering. "The
+  rewrite call happened" and "the text changed" are different facts — the
+  rewriter legitimately returns self-contained inputs verbatim — so the flag is
+  computed as `standalone != query` after stripping, not from which branch ran.
+  A thin result is now attributable by reading one line: rewrite drift and
+  threshold cuts are separable. The line goes to the console handler only and
+  does not survive a process restart — see
   [Known limitations](#known-limitations).
 
 ## API
@@ -692,6 +712,57 @@ a hit at 0.52 in English and a hit at 0.35 in Chinese say nothing about relative
 quality. What is comparable is ranking — which `chunk_id` came back, and in what
 order.
 
+### The threshold on rewritten queries
+
+Rewriting produces a different string, therefore a different vector, therefore
+different distances — and the threshold was calibrated on human phrasings with
+a margin of 0.029. Measured 15 Aug, in English: five pairs, one referent type
+each. A pair is a follow-up question carrying an unresolved referent, resolved
+by `rewrite_query()` against a real conversation, run against a human-written
+self-contained formulation of the same question with an empty history.
+Distances come from the retrieval log; chunks are counted against
+`DISTANCE_THRESHOLD = 0.55`.
+
+| # | referent | follow-up | passed (human / rewritten) | best hit (human / rewritten) |
+|---|---|---|---|---|
+| 1 | object     | "Where should that file be saved?"     | 3 / 3 | 0.4279 / 0.4022 |
+| 3 | property   | "What about the LED?"                  | 5 / 5 | 0.3941 / 0.3814 |
+| 4 | object     | "Can I edit it manually?"              | 2 / 2 | 0.4446 / 0.4195 |
+| 5 | clarifying | "Why does that step need USB Blaster?" | 5 / 5 | 0.5124 / 0.4820 |
+
+The numbering keeps a gap: pair 2 measured nothing — see below.
+
+Findings on the four valid pairs: the pass counts are identical, and the
+rewritten query lands *closer* than the human phrasing in every pair (−0.013 to
+−0.030 on the best hit). No chunk that the human formulation retrieved was lost
+to the rewrite. The mechanism is visible in the log: the rewriter compresses
+questions into noun phrases — "What about the LED?" becomes
+`LED pin on the AC620 board` — and a dense noun phrase sits closer to dense
+technical transcript text than a full interrogative sentence does. The
+compression is itself an edit beyond what `REWRITE_PROMPT` permits; here it
+pays.
+
+Pair 2, the ordinal ("What about the second one?"), is excluded twice over.
+The rewriter resolved the ordinal by *choosing* a method — the query came back
+as `Manual writing of pin assignment file in Quartus` — instead of preserving
+the reference, and the human baseline had been mis-written against the *other*
+method, so the two runs target different chunks and their numbers are not
+comparable. What the pair yielded instead is qualitative and worth more: the
+ordinal defect itself (see [Known limitations](#known-limitations)) and one
+live execution of the refusal path — generation, given the original question
+plus two above-threshold chunks, answered that the fragments contain no
+"second one" instead of extrapolating an answer.
+
+Scope, stated plainly: English only, five pairs, all aimed at one lecture's
+material. Chinese was not benchmarked and owns two logged incidents of its own
+class: the same question returning 5 chunks on an empty history and 1 with
+history present, and one rewrite that returned a statement lifted from the
+previous answer — the question form was lost entirely. Neither is reproduced
+by the English measurement.
+
+Conclusion for the measured scope: `DISTANCE_THRESHOLD = 0.55` holds on
+rewritten English queries, and no recalibration is warranted.
+
 ### Dense retrieval bridges mangled terminology
 
 ASR substitutes homophones for domain terms (see
@@ -758,7 +829,7 @@ root, never as a bare script path.
 | evaluation | ✓ fixed multilingual query set, mechanical term check             |
 | API        | ✓ POST /search, SSE streaming, typed request models, threshold applied |
 | generation | ✓ error boundary, truncation check, logged failures, token streaming |
-| multi-turn | ✓ query rewriting before retrieval; threshold benchmark **not run** |
+| multi-turn | ✓ query rewriting before retrieval; threshold benchmark passed on EN, zh unmeasured |
 | frontend   | ✓ chat UI, streamed tokens, local conversations, folded sources   |
 
 ## Known limitations
@@ -774,9 +845,13 @@ root, never as a bare script path.
   query language regardless of what the prompt requests (measured across two
   prompt configurations, three query languages each — see
   [Generation](#generation)). Not always: an English query has been observed
-  returning an answer entirely in Chinese, the language of the corpus, with the
-  prompt explicitly instructing English. There is no post-generation check, so
-  nothing prevents this from happening in front of a user.
+  returning an answer entirely in Chinese, the language of the corpus. The
+  14 Aug message-layout change — XML-tagged blocks with a trailing language
+  instruction — flipped that observed case and held through the English
+  benchmark runs that followed. It remains an instruction, not a check:
+  Chinese and Russian queries have not been re-measured since the change, and
+  there is still no post-generation verification, so nothing *prevents* the
+  wrong language from reaching a user.
 
 - **The threshold cuts relevant chunks, not only noise.** Observed at 0.5815: a
   chunk listing the actual pin assignments for the experiment, containing the
@@ -790,32 +865,46 @@ root, never as a bare script path.
   results of which two were largely the same passage. Input tokens are paid for
   all five, and `max_tokens` does not cap input.
 
-- **Multi-turn is not validated against the calibrated threshold.** Rewriting
-  produces a different string, therefore a different vector, therefore
-  different distances — and `DISTANCE_THRESHOLD` was calibrated on human
-  phrasings with a margin of 0.029. Observed directly: the *same* question
-  asked with an empty history returned 5 chunks and, asked again with history
-  present, returned 1. The answer to the one-chunk version reads perfectly
-  well; it has simply lost the specifics the other four carried. That is the
-  failure mode of this whole class — retrieval degrades into a fluent answer,
-  not into an error. The benchmark over rewritten queries has not been run, so
-  the size of the effect is unknown.
+- **The rewrite benchmark covers English only.** On four valid referent pairs
+  the calibrated threshold held and the rewritten query landed closer than the
+  human phrasing every time — see
+  [Evaluation](#the-threshold-on-rewritten-queries). Chinese is the unmeasured
+  half, and it owns the two worst logged incidents: the same question returning
+  5 chunks with an empty history and 1 with history present, and a rewrite that
+  returned a statement lifted from the previous answer instead of a query. The
+  failure class stands — retrieval degrades into a fluent answer, not into an
+  error — but its size in Chinese is unknown.
+
+- **Ordinal referents are resolved by guessing.** "What about the second one?"
+  was rewritten into one concrete method the model picked itself. The
+  enumeration that defines "second" lives in the previous *answer*, and only
+  its first 400 characters reach `rewrite_query()`. Generation then refused
+  honestly — the rewritten query retrieved real chunks, but the original
+  question had no "second one" to bind to in them. One observation; no fix
+  scheduled before deployment.
 
 - **The rewrite alters wording beyond what the prompt allows.** Observed: a
   question containing a mis-typed term came back with the term corrected. The
   correction was right, and it is still an edit the instruction forbids, which
-  means the constraint holds by disposition rather than by construction. Its
-  effect on distance is unmeasured.
+  means the constraint holds by disposition rather than by construction. The
+  English benchmark added a systematic form of the same thing: questions are
+  compressed into noun phrases, which measurably helps retrieval — see
+  [Evaluation](#the-threshold-on-rewritten-queries) — and is still an edit the
+  instruction forbids.
 
-- **The rewritten query is not logged.** Only the original question and the
-  final chunk count are visible, so a thin result cannot be attributed to
-  either the rewrite or the threshold without guessing. This blocks the
-  benchmark above more than it blocks the product.
+- **The retrieval log does not survive a restart.** The `INFO` line carrying
+  the original query, the rewritten form and the raw distances goes to the
+  console handler only; `logs/errors.log` starts at `ERROR`. A crashed or
+  restarted process takes the retrieval history with it. A file handler for
+  `INFO` is deferred to the deploy phase.
 
-- **The "no answer in the corpus" path is untested.** Every candidate question
-  tried so far was cut by the threshold before generation ran, so the prompt's
-  behaviour when it has context but no answer — and the separation between the
-  `[History]` and `[Context]` blocks — has never actually executed.
+- **The "no answer in the corpus" path has executed once, unplanned.** During
+  the rewrite benchmark, generation received two above-threshold chunks and a
+  question they could not answer, and stated that the fragments contain no such
+  information instead of extrapolating. The refusal rule works in at least one
+  configuration. The designed test — a term from the corpus crossed with an
+  aspect the lectures do not cover — has still not run, and one execution says
+  little about the `<history>`/`<context>` separation in general.
 
 - **ASR mangles domain terminology, and a larger model does not fix it.**
   On Chinese technical lecture audio, whisper substitutes homophones: the
@@ -932,12 +1021,12 @@ root, never as a bare script path.
 - **A hanging LLM call holds a threadpool worker for the length of its
   timeout.** The DeepSeek call is synchronous, so a slow provider occupies its
   worker until `DEEPSEEK_TIMEOUT` (30 s) expires, and a stalled rewrite until
-  `REWRITE_TIMEOUT` (5 s). Both are bounded now, which the SDK default of 600 s
-  was not; combined with the single DB connection, a burst of slow requests
-  still leaves the API unresponsive while the process is alive and the port is
-  open.
+  `REWRITE_TIMEOUT` (10 s). Both are bounded now, which the SDK default of
+  600 s was not; combined with the single DB connection, a burst of slow
+  requests still leaves the API unresponsive while the process is alive and the
+  port is open.
 
-- **A conversation grows the prompt every turn.** `[History]` carries the last
+- **A conversation grows the prompt every turn.** `<history>` carries the last
   two questions and the last answer in full, so input tokens per request rise
   with the length of the thread. Nothing truncates by token count — the bound
   is a turn count, which is a proxy, not a limit.
