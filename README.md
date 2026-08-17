@@ -89,35 +89,31 @@ CREATE ROLE ragbot LOGIN PASSWORD 'your-password-here';
 CREATE DATABASE ragbot OWNER ragbot;
 \c ragbot
 CREATE EXTENSION vector;
+GRANT CREATE ON SCHEMA public TO ragbot;
 ```
 
 `CREATE EXTENSION` requires superuser and is per-database: it must be run inside
 `ragbot`, not in the default `postgres` database.
+`GRANT CREATE ON SCHEMA public` is not redundant either. Since PostgreSQL 15 the
+`public` schema no longer grants `CREATE` to every role by default, so a freshly
+created role fails on its first `CREATE TABLE` with a permission error — before
+any SQL in it is parsed.
 
 ### 4. Schema
 
-Connect as the application role and create the table:
+Connect as the application role and apply the schema file:
 
 ```bash
-psql "postgresql://ragbot:your-password-here@localhost:5432/ragbot"
+psql "postgresql://ragbot:your-password-here@localhost:5432/ragbot" -f app/db/schema.sql
 ```
 
-```sql
-CREATE TABLE embeddings (
-    chunk_id          TEXT PRIMARY KEY,
-    video_id          TEXT             NOT NULL,
-    text              TEXT             NOT NULL,
-    chunk_start       DOUBLE PRECISION NOT NULL,
-    chunk_end         DOUBLE PRECISION NOT NULL,
-    segment_start_idx INTEGER          NOT NULL,
-    segment_end_idx   INTEGER          NOT NULL,
-    embedding         vector(1024)     NOT NULL
-);
+`app/db/schema.sql` is the single source of truth for the database structure.
+It is not idempotent by design: a second run against a populated database fails
+loudly instead of silently doing nothing.
 
-CREATE INDEX ON embeddings (video_id);
-```
+#### `embeddings`
 
-Notes on the schema:
+One row per chunk, `chunk_id` as primary key, `embedding` as `vector(1024)`.
 
 - Every column is `NOT NULL`. A row with a missing embedding or missing offsets
   is not a degraded row, it is a broken one: it would be returned by search and
@@ -129,6 +125,31 @@ Notes on the schema:
   different dimension and a new table.
 - The B-tree index on `video_id` supports the idempotency check. No vector index
   is created — see [Retrieval](#retrieval).
+
+#### `jobs`
+
+One row per uploaded lecture awaiting processing. The upload endpoint inserts,
+the worker claims and updates, the status endpoint reads. Neither process knows
+the other exists.
+
+- `status` is constrained by `CHECK`. A typo written by the worker would produce
+  a row nobody can find again: not `queued`, so never claimed; not `done`, so
+  never closed. The job would disappear without an error anywhere. The
+  constraint rejects it at write time instead.
+- `stage` exists only to tell the user what is happening. No decision is taken
+  on it — neither whether to claim a row nor where to resume — because it is
+  written *before* the step runs and therefore records intent, not result.
+- `error` is nullable, and `NULL` means no failure occurred. An empty string
+  would collapse the difference between "no error" and "an error with no
+  message".
+- `created_at` defaults to `now()`, so the insert never carries a timestamp of
+  its own.
+
+**Rejected: resuming a partially processed job from its last stage.** It requires
+every stage to answer "how much of me is already done". Without that, re-running
+`embed` on a job that died halfway inserts duplicate chunks — same text, new
+embeddings, no error raised, and retrieval quietly returns the same fragment
+twice. Abandoned jobs are reset to `queued` and reprocessed from the start.
 
 ### 5. Configuration
 
