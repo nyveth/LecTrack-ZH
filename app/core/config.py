@@ -31,3 +31,5 @@ REWRITE_TIMEOUT = 10.0
 # margin is 0.029 - a single new chunk can invalidate this.
 # recalculate when the corpus changes - distances are not portable across corpora.
 DISTANCE_THRESHOLD = 0.55
+
+POLL_INTERVAL = 5

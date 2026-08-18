@@ -251,6 +251,7 @@ python3 -m app.ingestion.chunk             # transcript  → overlapping chunks 
 python3 -m app.ingestion.embed             # chunks      → pgvector rows
 python3 -m app.retrieval.search "查询内容"   # query       → ranked chunks above threshold
 python3 -m scripts.eval_queries            # query set   → measurement table
+python3 -m app.worker                      # polls jobs table → claims queued rows
 uv run uvicorn app.api.main:app --reload   # HTTP        → SSE: sources + answer tokens
 ```
 
