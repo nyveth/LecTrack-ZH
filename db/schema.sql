@@ -1,4 +1,3 @@
-CREATE EXTENSION IF NOT EXISTS vector;
 CREATE TABLE embeddings (
     chunk_id          TEXT PRIMARY KEY,
     video_id          TEXT             NOT NULL,

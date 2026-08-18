@@ -104,12 +104,12 @@ any SQL in it is parsed.
 Connect as the application role and apply the schema file:
 
 ```bash
-psql "postgresql://ragbot:your-password-here@localhost:5432/ragbot" -f app/db/schema.sql
+psql "postgresql://ragbot:your-password-here@localhost:5432/ragbot" -f db/schema.sql
 ```
 
-`app/db/schema.sql` is the single source of truth for the database structure.
-It is not idempotent by design: a second run against a populated database fails
-loudly instead of silently doing nothing.
+`db/schema.sql` is the single source of truth for the database structure. It is
+not idempotent by design: a second run against a populated database fails loudly
+instead of silently doing nothing.
 
 #### `embeddings`
 
