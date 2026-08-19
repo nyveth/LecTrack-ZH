@@ -16,6 +16,7 @@ from app.core.config import (
     DATABASE_URL,
     DISTANCE_THRESHOLD,
     LECTURES_DIR,
+    LLM_UNAVAILABLE_DETAIL,
     MODEL_NAME,
     TOP_K,
 )
@@ -106,7 +107,7 @@ def search_endpoint(body: SearchRequest):
         except RewriteUnavailable:
             raise HTTPException(
                 status_code=503,
-                detail="We were unable to generate a response at this time. Please try again later.",
+                detail=LLM_UNAVAILABLE_DETAIL,
             )
         results = search(
             query=standalone_query, conn=conn, top_k=body.top_k, model=model
@@ -131,7 +132,7 @@ def search_endpoint(body: SearchRequest):
     except LlmUnavailable:
         raise HTTPException(
             status_code=503,
-            detail="We were unable to generate a response at this time. Please try again later.",
+            detail=LLM_UNAVAILABLE_DETAIL,
         )
 
     sources_payload = [

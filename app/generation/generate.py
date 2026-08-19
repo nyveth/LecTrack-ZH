@@ -9,6 +9,9 @@ from app.core.config import (
     DEEPSEEK_MAX_TOKENS,
     DEEPSEEK_MODEL,
     DEEPSEEK_TIMEOUT,
+    GENERATION_HISTORY_TURNS,
+    REWRITE_ANSWER_CHARS,
+    REWRITE_HISTORY_TURNS,
     REWRITE_MAX_TOKENS,
     REWRITE_TIMEOUT,
 )
@@ -38,50 +41,51 @@ logger = logging.getLogger(__name__)
 
 
 def build_user_message(query: str, chunks: list[dict], history: list[dict]) -> str:
-    """Combines the question, context fragments, and history into a structured user message."""
+    """Combines dialogue history pairs, retrieved chunks, and the latest query."""
     formatted_chunks = []
     formatted_history = []
 
-    if history:
-        for idx, turn in enumerate(history[-2:], start=1):
-            question = turn["question"].strip()
-            formatted_history.append(f"[Question {idx}]\n{question}")
-        formatted_history.append(f"[Answer {idx}]\n{history[-1]['answer'].strip()}")
+    for idx, turn in enumerate(history[-GENERATION_HISTORY_TURNS:], start=1):
+        q = turn.get("question", "").strip()
+        a = turn.get("answer", "").strip()
+        formatted_history.append(f"[Question {idx}]\n{q}\n[Answer {idx}]\n{a}")
 
     for idx, chunk in enumerate(chunks, start=1):
-        text = chunk["text"].strip()
+        text = chunk.get("text", "").strip()
         formatted_chunks.append(f"[Fragment {idx}]\n{text}")
 
     parts = []
-
-    if history:
+    if formatted_history:
         history_block = "\n\n".join(formatted_history)
         parts.append(f"<history>\n{history_block}\n</history>")
 
     context_block = "\n\n".join(formatted_chunks)
     parts.append(f"<context>\n{context_block}\n</context>")
     parts.append(f"<question>\n{query.strip()}\n</question>")
-
     parts.append(CRITICAL_LANGUAGE_INSTRUCTION)
+
     return "\n\n".join(parts)
 
 
 def rewrite_query(query: str, history: list[dict]) -> str:
-
     formatted_history = []
-    for idx, turn in enumerate(history[-3:], start=1):
-        question = turn["question"].strip()
-        formatted_history.append(f"[Question {idx}]\n{question}")
 
-    formatted_history.append(f"[Truncated Answer]\n{history[-1]['answer'][:400]}")
+    for idx, turn in enumerate(history[-REWRITE_HISTORY_TURNS:], start=1):
+        q = turn.get("question", "").strip()
+        formatted_history.append(f"[Question {idx}]\n{q}")
+
+    if history:
+        last_answer = history[-1].get("answer", "").strip()[:REWRITE_ANSWER_CHARS]
+        formatted_history.append(f"[Truncated Last Answer]\n{last_answer}")
+
     formatted_history.append(f"[Latest Query]\n{query.strip()}")
-
     chat_context = "\n\n".join(formatted_history)
 
     messages = [
         {"role": "system", "content": REWRITE_PROMPT},
         {"role": "user", "content": chat_context},
     ]
+
     try:
         response = client.chat.completions.create(
             model=DEEPSEEK_MODEL,
@@ -91,13 +95,12 @@ def rewrite_query(query: str, history: list[dict]) -> str:
             timeout=REWRITE_TIMEOUT,
         )
     except (APIConnectionError, APIStatusError, APITimeoutError):
-        logger.exception("Problem when rewritting user query")
+        logger.exception("DeepSeek API failure during query rewrite")
         raise RewriteUnavailable("DeepSeek unreachable during query rewrite")
 
     rewritten = response.choices[0].message.content.strip()
-
     if not rewritten:
-        logger.error("Answer from LLM empty")
+        logger.error("Empty response received from DeepSeek during rewrite")
         raise RewriteUnavailable("Empty rewrite returned by model")
 
     return rewritten
