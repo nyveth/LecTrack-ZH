@@ -9,6 +9,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pgvector.psycopg import register_vector
+from psycopg.rows import dict_row
 from pydantic import BaseModel, Field
 from sentence_transformers import SentenceTransformer
 
@@ -184,3 +185,14 @@ def upload_endpoint(file: UploadFile = File(...)):
         )
     logger.info("Upload accepted: job %s, file %s", job_id, clean_filename)
     return {"job_id": job_id}
+
+
+@app.get("/status/{job_id}")
+def get_status(job_id: int):
+    with conn.cursor(row_factory=dict_row) as curr:
+        curr.execute("SELECT status, stage, error FROM jobs WHERE id = %s", (job_id,))
+        result = curr.fetchone()
+
+    if result is None:
+        raise HTTPException(status_code=404, detail="Job not found!")
+    return result
