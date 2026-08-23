@@ -7,7 +7,7 @@ import psycopg
 from pgvector.psycopg import register_vector
 from sentence_transformers import SentenceTransformer
 
-from app.core.config import CHUNKS_DIR, DATABASE_URL, MODEL_NAME
+from app.core.config import BATCH_SIZE, CHUNKS_DIR, DATABASE_URL, MODEL_NAME
 from app.core.log_config import setup_logging
 from app.core.results import FileResult
 
@@ -83,7 +83,6 @@ def main() -> None:
         sys.exit(1)
 
     # 3GB VRAM; peak scales as batch_size x max_seq_len^2 due to padding
-    batch_size = 8
     model = SentenceTransformer(MODEL_NAME)
 
     counts = Counter()
@@ -99,7 +98,7 @@ def main() -> None:
 
             # error boundary per file: one bad file must not kill the run
             try:
-                counts[embed_file(chunk_path, model, batch_size, conn)] += 1
+                counts[embed_file(chunk_path, model, BATCH_SIZE, conn)] += 1
             except Exception as e:
                 failed += 1
                 logger.error("Embedding error %s: %s", chunk_path, e)
