@@ -1,64 +1,95 @@
 /* ─────────────────────────────────────────────────────────────────────
-   LecTrack-ZH theme. Replaces the Industry design system: warm paper
-   ground, soft radii, motion on hover. Every value the UI uses lives
-   here as a variable — page.tsx should never carry a raw hex.
+   LecTrack-ZH theme. Грунт почти чёрный, ни одного цветного акцента:
+   выразительность в типографике и в ступенях серого. Акцент — это
+   яркость, а не цвет. Каждое значение, которое использует UI, живёт
+   здесь переменной: page.tsx не должен носить сырой hex.
    ───────────────────────────────────────────────────────────────────── */
 
-/* Chinese only. Inter Tight (loaded in layout.tsx) has no CJK glyphs, so
-   without this every Chinese character falls through to whatever the OS
-   happens to ship — a different face from the rest of the interface, and
-   a different one on every machine. Google slices CJK by unicode-range,
-   so a page showing a few hundred characters fetches a few small files
-   rather than the whole 5 MB family. */
+/* Только китайский. Основная гарнитура не содержит CJK-глифов, и без
+   этого импорта каждый иероглиф проваливается в то, что оказалось в
+   системе, — другое начертание, и на каждой машине своё. Google режет
+   CJK по unicode-range, поэтому страница с парой сотен символов тянет
+   несколько мелких файлов, а не всё семейство. */
 @import url("https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600&display=swap");
 
 :root {
-    /* ground */
-    --bg: #dad5c6;
-    --panel: #f4f2ea;
-    --sidebar: rgba(226, 222, 209, 0.72);
-    --card: #faf9f4;
-    --card-lift: #ffffff;
-    --pill: #e6e2d6;
+    /* грунт — ступени одного почти чёрного */
+    --bg: #0b0c0c;
+    --panel: #101111;
+    --sidebar: rgba(16, 17, 17, 0.72);
+    --card: #121313;
+    --card-lift: #191a1a;
+    --pill: #1b1c1c;
 
-    /* ink */
-    --text: #2a2723;
-    --text-soft: #6e675c;
-    --text-muted: #8a8378;
-    --on-accent: #f7f5ef;
+    /* текст */
+    --text: #ecedec;
+    --text-soft: #9a9c9a;
+    --text-muted: #6d6f6e;
+    --on-accent: #0b0c0c;
 
-    /* accent */
-    --accent: #6b6150;
-    --accent-hover: #7c7160;
-    --accent-press: #5a5142;
-    --accent-deep: #4e4638;
-    --accent-light: #7e7361;
-    --accent-flat: #c4beae;
+    /* акцент — один на весь продукт, шкала яркости, не цвет */
+    --accent: #ecedec;
+    --accent-hover: #ffffff;
+    --accent-press: #cfd0cf;
+    --accent-deep: #b6b7b6;
+    --accent-light: #d6d7d6;
+    --accent-flat: #2b2d2c;
 
-    /* signal */
-    --ok: #7e9370;
-    --warn: #9a7a4e;
-    --danger: #8f5344;
+    /* сигнал — только настоящее состояние.
+       --danger остаётся единственным цветным значением в файле: провал
+       задания обязан отличаться от нормы, а на одной яркости он не
+       отличается. --ok и --warn сведены в серое. */
+    --ok: #ecedec;
+    --warn: #8a8c8a;
+    --danger: #c2554a;
 
-    /* lines */
-    --line: rgba(42, 39, 35, 0.1);
-    --line-soft: rgba(42, 39, 35, 0.08);
-    --line-strong: rgba(42, 39, 35, 0.14);
+    /* линии */
+    --line: rgba(236, 237, 236, 0.1);
+    --line-soft: rgba(236, 237, 236, 0.06);
+    --line-strong: rgba(236, 237, 236, 0.17);
 
-    /* geometry */
+    /* типографика — пять именованных ролей вместо сырых размеров.
+       В файле их не было: классы .up-* на них ссылались, а объявления
+       потерялись при починке CssSyntaxError. */
+    --t-title: 22px;
+    --t-title-w: 600;
+    --t-title-track: -0.4px;
+
+    --t-section: 15px;
+    --t-section-w: 600;
+    --t-section-track: -0.2px;
+
+    --t-body: 13.5px;
+    --t-body-w: 400;
+    --t-body-track: 0;
+
+    --t-label: 12.5px;
+    --t-label-w: 500;
+    --t-label-track: 0;
+
+    --t-micro: 11px;
+    --t-micro-w: 500;
+    --t-micro-track: 0.3px;
+
+    /* геометрия — без изменений */
     --r-sm: 6px;
     --r-md: 9px;
     --r-lg: 12px;
     --r-xl: 20px;
     --r-pill: 999px;
 
-    --shadow-sm: 0 1px 3px rgba(42, 39, 35, 0.06);
-    --shadow-md: 0 4px 14px rgba(78, 70, 56, 0.14);
-    --shadow-lg: 0 6px 18px rgba(78, 70, 56, 0.1);
+    /* На чёрном тень почти не видна: работу разделения слоёв берут на
+       себя границы, тени оставлены только для глубины у всплывающего. */
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.5);
+    --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.55);
+    --shadow-lg: 0 6px 18px rgba(0, 0, 0, 0.6);
 
-    /* one easing for every interaction, so nothing feels out of family */
     --ease: cubic-bezier(0.2, 0.8, 0.3, 1);
     --dur: 0.22s;
+
+    --t-display: 30px;
+    --sphere-lit: #f4f6f6;
+    --sphere-body: #17191a;
 }
 
 * {
@@ -69,23 +100,22 @@ body {
     margin: 0;
     background: var(--bg);
     color: var(--text);
-    font-family: var(--font-body);
+    font-family: var(--font-body, ui-sans-serif, system-ui, "Noto Sans SC", sans-serif);
     -webkit-font-smoothing: antialiased;
     letter-spacing: -0.1px;
 }
 
 ::selection {
-    background: rgba(107, 97, 80, 0.2);
+    background: rgba(236, 237, 236, 0.22);
 }
 
-/* The global rule tints selection with the accent, which is also the
-   user bubble's own background — selecting text there produced accent
-   on accent and looked like nothing happened. Inside the bubble the
-   selection inverts instead. */
+/* Пузырь пользователя сам залит акцентом, поэтому общее правило давало
+   бы светлое на светлом и выглядело бы как несработавшее выделение.
+   Внутри пузыря выделение инвертируется. */
 .bubble-user::selection,
 .bubble-user *::selection {
-    background: rgba(255, 255, 255, 0.34);
-    color: #ffffff;
+    background: rgba(11, 12, 12, 0.28);
+    color: var(--on-accent);
 }
 
 ::-webkit-scrollbar {
@@ -94,7 +124,7 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-    background: rgba(42, 39, 35, 0.18);
+    background: rgba(236, 237, 236, 0.16);
     border-radius: 8px;
 }
 
@@ -123,24 +153,23 @@ body {
     }
 }
 
-/* ── brand mark ─────────────────────────────────────────────────── */
+/* ── марка ──────────────────────────────────────────────────────────
+   Три штриха — расшифровка, увиденная издалека. Плитки и градиента
+   больше нет: штрихи лежат прямо на грунте, тем же весом, что линии.
+   В покое стоят на фиксированной непрозрачности. Пока идёт поиск,
+   свет проходит слева направо, и штрихи отвечают ему по очереди —
+   движется тот же объект, который представляет корпус, а не спиннер,
+   привинченный рядом. */
 
 .mark {
     display: flex;
     align-items: center;
     justify-content: center;
     flex: none;
-    background: linear-gradient(160deg, var(--accent-light), var(--accent-deep));
-    color: #f5f3ec;
+    background: transparent;
+    color: var(--text);
     font-weight: 600;
 }
-
-/* ── the mark ───────────────────────────────────────────────────────
-   Three stacked bars — a transcript seen from far away. At rest they
-   sit at fixed opacities. While a search runs, a light sweeps left to
-   right across the tile and the bars answer it in sequence, so the
-   thing that is moving is the same object that represents the corpus,
-   not a spinner bolted next to it. */
 
 .mark-tile {
     position: relative;
@@ -148,18 +177,18 @@ body {
     place-items: center;
     flex: none;
     overflow: hidden;
-    background: linear-gradient(160deg, var(--accent-light), var(--accent-deep));
+    background: transparent;
 }
 
 .mark-bar {
-    fill: var(--on-accent);
+    fill: var(--text);
 }
 
 .mark-tile[data-active="true"] .mark-bar {
     animation: mark-pulse 1.15s ease-in-out infinite;
 }
 
-/* Staggered so the bars read top-to-bottom, like a line being scanned. */
+/* Со сдвигом, чтобы штрихи читались сверху вниз, как сканируемая строка. */
 .mark-tile[data-active="true"] .mark-bar:nth-child(2) {
     animation-delay: 0.16s;
 }
@@ -174,7 +203,7 @@ body {
     opacity: 0;
     background: linear-gradient(100deg,
             transparent 35%,
-            rgba(255, 255, 255, 0.42) 50%,
+            rgba(236, 237, 236, 0.18) 50%,
             transparent 65%);
 }
 
@@ -187,7 +216,7 @@ body {
 
     0%,
     100% {
-        opacity: 0.35;
+        opacity: 0.3;
     }
 
     45% {
@@ -205,11 +234,10 @@ body {
     }
 }
 
-/* ── source cards ───────────────────────────────────────────────────
-   The card is a div, not a button: text inside a <button> cannot be
-   selected, which is why the Chinese was impossible to copy. The
-   header row is the clickable part; the transcript below is plain,
-   selectable text. */
+/* ── шапка карточки источника ───────────────────────────────────────
+   Карточка — div, а не button: текст внутри <button> нельзя выделить,
+   из-за чего китайский невозможно было скопировать. Кликабельна шапка;
+   расшифровка ниже — обычный выделяемый текст. */
 
 .src-head {
     display: flex;
@@ -253,14 +281,14 @@ body {
     line-height: 1.6;
     color: var(--text-soft);
     white-space: pre-wrap;
-    /* Explicit, because a parent's cursor:pointer makes text look
-     unselectable even when it is not. */
+    /* Явно, потому что cursor:pointer у родителя делает текст на вид
+     невыделяемым, даже когда он выделяется. */
     cursor: text;
     user-select: text;
 }
 
-/* Collapsed state still shows the first line, so a folded card is a
-   recognisable quote rather than a bare timestamp. */
+/* Свёрнутая карточка показывает первую строку: так она остаётся
+   узнаваемой цитатой, а не голой отметкой времени. */
 .src-preview {
     margin: 6px 0 0;
     font-size: 12px;
@@ -271,9 +299,17 @@ body {
     white-space: nowrap;
 }
 
-/* ── buttons ────────────────────────────────────────────────────── */
+/* ── кнопки ─────────────────────────────────────────────────────── */
 
 .btn {
+    /* Все кнопки в интерфейсе держат иконку, а иногда иконку и текст.
+       Inline-SVG садится на базовую линию и без этого уезжает вверх, как
+       уехала стрелка отправки. Центрирование живёт здесь, а не в каждом
+       модификаторе по отдельности. */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
     border: none;
     cursor: pointer;
     font: inherit;
@@ -294,10 +330,6 @@ body {
 }
 
 .btn-primary {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
     width: 100%;
     height: 34px;
     background: var(--accent);
@@ -316,21 +348,23 @@ body {
     transform: scale(0.985);
 }
 
-/* The send control: a disc that only fills once there is something to
-   send, so the affordance itself reports draft state. */
+/* Отправка: диск, который заливается только когда есть что отправлять,
+   так что сама кнопка отчитывается о состоянии черновика. В покое диск
+   тёмный, и значок на нём обязан быть светлым — иначе тёмное на тёмном. */
 .btn-send {
     width: 32px;
     height: 32px;
     flex: none;
     border-radius: var(--r-pill);
     background: var(--accent-flat);
-    color: var(--on-accent);
+    color: var(--text-muted);
     font-size: 15px;
     line-height: 1;
 }
 
 .btn-send[data-ready="true"] {
     background: var(--accent);
+    color: var(--on-accent);
 }
 
 .btn-send:hover:not(:disabled) {
@@ -349,12 +383,12 @@ body {
 }
 
 .btn-quiet:hover:not(:disabled) {
-    background: rgba(107, 97, 80, 0.1);
+    background: rgba(236, 237, 236, 0.08);
     color: var(--text);
     transform: scale(1.04);
 }
 
-/* ── sidebar threads ────────────────────────────────────────────── */
+/* ── ветки в сайдбаре ───────────────────────────────────────────── */
 
 .thread {
     display: flex;
@@ -368,11 +402,11 @@ body {
 }
 
 .thread:hover {
-    background: rgba(107, 97, 80, 0.1);
+    background: rgba(236, 237, 236, 0.06);
 }
 
 .thread[data-on="true"] {
-    background: rgba(107, 97, 80, 0.16);
+    background: rgba(236, 237, 236, 0.11);
 }
 
 .thread-title {
@@ -395,8 +429,8 @@ body {
     letter-spacing: 1px;
 }
 
-/* The trigger also stays visible while its own menu is open, otherwise
-   the button vanishes the moment the pointer moves onto the menu. */
+/* Триггер остаётся видимым, пока открыто его собственное меню, иначе
+   кнопка исчезает ровно в тот момент, когда курсор уходит на меню. */
 .thread:hover .thread-x,
 .thread:has(.menu) .thread-x {
     opacity: 1;
@@ -413,7 +447,7 @@ body {
     width: 100%;
     border: 1px solid var(--line-strong);
     border-radius: var(--r-sm);
-    background: var(--card);
+    background: var(--card-lift);
     padding: 4px 7px;
     font: inherit;
     font-size: 13px;
@@ -422,7 +456,7 @@ body {
     outline: none;
 }
 
-/* ── row menu ───────────────────────────────────────────────────── */
+/* ── меню строки ────────────────────────────────────────────────── */
 
 .menu {
     position: absolute;
@@ -433,7 +467,7 @@ body {
     padding: 4px;
     display: flex;
     flex-direction: column;
-    border: 1px solid var(--line);
+    border: 1px solid var(--line-strong);
     border-radius: var(--r-lg);
     background: var(--card-lift);
     box-shadow: var(--shadow-lg);
@@ -453,7 +487,7 @@ body {
 }
 
 .menu-item:hover {
-    background: rgba(107, 97, 80, 0.1);
+    background: rgba(236, 237, 236, 0.08);
 }
 
 .menu-item-danger {
@@ -461,10 +495,10 @@ body {
 }
 
 .menu-item-danger:hover {
-    background: rgba(143, 83, 68, 0.1);
+    background: rgba(194, 85, 74, 0.14);
 }
 
-/* ── messages ───────────────────────────────────────────────────── */
+/* ── сообщения ──────────────────────────────────────────────────── */
 
 .bubble-user {
     max-width: 78%;
@@ -473,8 +507,8 @@ body {
     color: var(--on-accent);
     font-size: 14.5px;
     line-height: 1.5;
-    /* The one asymmetric corner: it points the bubble back at its author
-     without needing a tail. */
+    /* Единственный асимметричный угол: он указывает на автора, и хвост
+     для этого не нужен. */
     border-radius: 18px 18px 4px 18px;
     white-space: pre-wrap;
 }
@@ -497,7 +531,7 @@ body {
     animation: blink 1s steps(1) infinite;
 }
 
-/* ── source cards ───────────────────────────────────────────────── */
+/* ── карточки источников ────────────────────────────────────────── */
 
 .src {
     display: flex;
@@ -521,15 +555,19 @@ body {
     box-shadow: var(--shadow-lg);
 }
 
+/* Отметка времени на грунте была бы белой плашкой посреди тёмной
+   карточки и перетягивала бы на себя всё внимание. Ступень серого
+   плюс граница. */
 .src-time {
     flex: none;
     height: 20px;
     padding: 0 7px;
     display: flex;
     align-items: center;
+    border: 1px solid var(--line);
     border-radius: var(--r-sm);
-    background: var(--accent);
-    color: var(--on-accent);
+    background: var(--pill);
+    color: var(--text);
     font-size: 11px;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
@@ -556,7 +594,7 @@ body {
     white-space: nowrap;
 }
 
-/* ── composer ───────────────────────────────────────────────────── */
+/* ── композер ───────────────────────────────────────────────────── */
 
 .composer {
     display: flex;
@@ -565,14 +603,14 @@ body {
     padding: 6px 6px 6px 16px;
     border: 1px solid var(--line-strong);
     border-radius: var(--r-xl);
-    background: #fdfcf8;
+    background: var(--card-lift);
     box-shadow: var(--shadow-sm);
     transition: border-color var(--dur), box-shadow var(--dur);
 }
 
 .composer:focus-within {
-    border-color: rgba(42, 39, 35, 0.26);
-    box-shadow: 0 2px 10px rgba(42, 39, 35, 0.08);
+    border-color: rgba(236, 237, 236, 0.3);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
 }
 
 .composer textarea {
@@ -589,7 +627,11 @@ body {
     background: transparent;
 }
 
-/* ── status pill ────────────────────────────────────────────────── */
+.composer textarea::placeholder {
+    color: var(--text-muted);
+}
+
+/* ── статус ─────────────────────────────────────────────────────── */
 
 .pill {
     display: flex;
@@ -599,6 +641,7 @@ body {
     padding: 0 10px;
     border-radius: var(--r-pill);
     background: var(--pill);
+    color: var(--text-soft);
     font-size: 12px;
 }
 
@@ -609,13 +652,13 @@ body {
     background: var(--ok);
 }
 
-/* ── notice ─────────────────────────────────────────────────────── */
+/* ── уведомление ────────────────────────────────────────────────── */
 
 .notice {
     padding: 9px 13px;
-    border: 1px solid rgba(143, 83, 68, 0.3);
+    border: 1px solid rgba(194, 85, 74, 0.34);
     border-radius: var(--r-lg);
-    background: rgba(143, 83, 68, 0.07);
+    background: rgba(194, 85, 74, 0.1);
     color: var(--danger);
     font-size: 12.5px;
 }
@@ -625,4 +668,29 @@ body {
         animation-duration: 0.01ms !important;
         transition-duration: 0.01ms !important;
     }
+}
+/* ── марка-ссылка ───────────────────────────────────────────────────
+   Название продукта в шапке ведёт на главную. Отрицательное поле слева
+   компенсирует собственные отступы: они увеличивают область попадания,
+   но не должны сдвигать буквы относительно края шапки. */
+
+.brand-link {
+    display: inline-flex;
+    align-items: center;
+    padding: 5px 7px;
+    margin-left: -7px;
+    border-radius: var(--r-sm);
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: -0.2px;
+    color: var(--text);
+    text-decoration: none;
+    transition:
+        background var(--dur),
+        color var(--dur);
+}
+
+.brand-link:hover {
+    background: rgba(236, 237, 236, 0.06);
+    color: var(--accent-hover);
 }

@@ -1,0 +1,520 @@
+/* ─────────────────────────────────────────────────────────────────────
+   Стили главной. Все имена с префиксом h-, и переменные тоже: theme.css
+   уже держит на :root свои --line, --t-body и класс .mark. Без префикса
+   чат и home молча перекрашивали бы друг друга.
+
+   Переменные объявлены не на :root, а на .h-shell: за пределами главной
+   их не существует.
+   ───────────────────────────────────────────────────────────────────── */
+
+.h-shell {
+    --h-line: rgba(255, 255, 255, 0.09);
+    --h-line-2: rgba(255, 255, 255, 0.16);
+    --h-fg: #f2f3f2;
+    --h-fg-2: #a9aeab;
+    --h-fg-3: #6f7573;
+
+    --h-t-display: clamp(38px, 5.4vw, 78px);
+    --h-t-lead: clamp(20px, 2.3vw, 30px);
+    --h-t-body: 13px;
+    --h-t-nav: 11px;
+    --h-t-micro: 10.5px;
+
+    --h-dur: 0.24s;
+    --h-ease: cubic-bezier(0.16, 1, 0.3, 1);
+
+    /* Сколько прокрутки достаётся одному шагу пайплайна. */
+    --h-seg: 58vh;
+
+    position: relative;
+    z-index: 1;
+    color: var(--h-fg);
+    font-family: var(--font-display), system-ui, sans-serif;
+}
+
+/* Сетка фона. Тем же весом, что штрихи марки. */
+.h-grid {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background-image:
+        repeating-linear-gradient(to right, rgba(255, 255, 255, 0.09) 0 1px, transparent 1px 96px),
+        repeating-linear-gradient(to bottom, rgba(255, 255, 255, 0.09) 0 1px, transparent 1px 96px);
+    opacity: 0.5;
+    mask-image: radial-gradient(120% 90% at 50% 30%, #000 30%, transparent 100%);
+    -webkit-mask-image: radial-gradient(120% 90% at 50% 30%, #000 30%, transparent 100%);
+}
+
+/* ── шапка ──────────────────────────────────────────────────────── */
+
+.h-nav {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 20px 28px;
+    background: linear-gradient(to bottom, #0b0c0c 62%, transparent);
+}
+
+.h-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.h-mark line {
+    stroke: var(--h-fg);
+    stroke-width: 1.6;
+    stroke-linecap: square;
+}
+
+.h-mark .h-tick {
+    stroke: var(--h-fg-3);
+    stroke-width: 1.6;
+}
+
+.h-wordmark {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: -0.2px;
+}
+
+.h-navlinks {
+    display: flex;
+    gap: 26px;
+}
+
+.h-navlinks a {
+    font-family: var(--font-mono), monospace;
+    font-size: var(--h-t-nav);
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--h-fg-2);
+    text-decoration: none;
+    transition: color var(--h-dur);
+}
+
+.h-navlinks a:hover {
+    color: var(--h-fg);
+}
+
+/* Уголки вместо рамки: кнопка обозначена, но не залита. */
+.h-bracket {
+    position: relative;
+    display: inline-block;
+    padding: 11px 20px;
+    font-family: var(--font-mono), monospace;
+    font-size: var(--h-t-nav);
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--h-fg);
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.h-bracket::before,
+.h-bracket::after {
+    content: "";
+    position: absolute;
+    width: 11px;
+    height: 11px;
+    border: 1px solid var(--h-line-2);
+    transition: border-color var(--h-dur);
+}
+
+.h-bracket::before {
+    top: 0;
+    left: 0;
+    border-right: 0;
+    border-bottom: 0;
+}
+
+.h-bracket::after {
+    bottom: 0;
+    right: 0;
+    border-left: 0;
+    border-top: 0;
+}
+
+.h-bracket:hover::before,
+.h-bracket:hover::after {
+    border-color: var(--h-fg);
+}
+
+/* ── герой ──────────────────────────────────────────────────────── */
+
+.h-hero {
+    min-height: calc(100dvh - 76px);
+    display: grid;
+    grid-template-columns: 1fr minmax(320px, 30vw) 1fr;
+    align-items: center;
+    gap: 24px;
+    padding: 0 28px 40px;
+}
+
+.h-head {
+    margin: 0;
+    font-size: var(--h-t-display);
+    font-weight: 600;
+    line-height: 0.94;
+    letter-spacing: -0.035em;
+}
+
+.h-head-r {
+    text-align: right;
+}
+
+.h-stage {
+    position: relative;
+    height: min(62vh, 560px);
+    display: grid;
+    place-items: center;
+}
+
+.h-field {
+    display: block;
+    width: 100%;
+    height: 100%;
+    cursor: crosshair;
+}
+
+/* ── о проекте ──────────────────────────────────────────────────── */
+
+.h-about {
+    border-top: 1px solid var(--h-line);
+    padding: 78px 28px 60px;
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.h-lead {
+    margin: 0;
+    max-width: 28ch;
+    font-size: var(--h-t-lead);
+    font-weight: 500;
+    line-height: 1.3;
+    letter-spacing: -0.02em;
+}
+
+.h-dim {
+    color: var(--h-fg-3);
+}
+
+.h-abody {
+    margin: 20px 0 0;
+    max-width: 56ch;
+    font-size: var(--h-t-body);
+    line-height: 1.68;
+    color: var(--h-fg-2);
+}
+
+.h-pipe {
+    margin-top: 34px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 14px;
+    font-family: var(--font-mono), monospace;
+    font-size: var(--h-t-micro);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--h-fg-2);
+}
+
+.h-arrow {
+    color: var(--h-fg-3);
+}
+
+.h-pipe b {
+    font-weight: 500;
+    color: var(--h-fg);
+}
+
+/* ── пайплайн ───────────────────────────────────────────────────────
+   Обычный поток, никаких обёрток на несколько экранов. Липкая только
+   левая колонка. Раскрытие плашки двигает то, что ниже неё, и ничего
+   больше, поэтому разъезжаться нечему. */
+
+.h-pipeline {
+    border-top: 1px solid var(--h-line);
+    padding: 0 28px;
+}
+
+/* Дорожка задаёт прокрутку, приколотый блок стоит на месте. Четвёрка в
+   calc — число шагов в STEPS; при добавлении пятого правится здесь. */
+.h-track {
+    position: relative;
+    height: calc(100vh + 4 * var(--h-seg));
+}
+
+.h-stick {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+}
+
+.h-plin {
+    width: 100%;
+    max-width: 1200px;
+    margin: 0 auto;
+    display: flex;
+    gap: 48px;
+    /* Не center: раскрытие плашки перецентрировало бы весь стек, и
+     дёргались бы в том числе плашки выше раскрытой. */
+    align-items: flex-start;
+}
+
+/* Не sticky: приколотый блок стоит неподвижно, и двигаться ему нечем.
+   Смещается на реальное расстояние между плашками, поэтому встаёт
+   вровень с раскрытой. */
+.h-left {
+    width: 30%;
+    opacity: 0;
+    transition: transform 0.7s var(--h-ease), opacity 0.6s var(--h-ease);
+}
+
+.h-left.is-in {
+    opacity: 1;
+}
+
+.h-plh {
+    margin: 0 0 16px;
+    font-size: 30px;
+    font-weight: 600;
+    letter-spacing: -0.03em;
+    line-height: 1;
+}
+
+.h-sum {
+    margin: 0;
+    max-width: 30ch;
+    min-height: 60px;
+    font-size: var(--h-t-body);
+    line-height: 1.6;
+    color: var(--h-fg-2);
+    transition: opacity 0.4s, transform 0.4s;
+}
+
+.h-sum.is-swap {
+    opacity: 0;
+    transform: translateY(6px);
+}
+
+.h-right {
+    width: 70%;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.h-card {
+    height: 80px;
+    overflow: hidden;
+    cursor: pointer;
+    padding: 0 24px;
+    border: 1px solid var(--h-line);
+    border-radius: 2px;
+    background: transparent;
+    opacity: 0;
+    transform: translateY(16px);
+    transition:
+        height 0.7s var(--h-ease),
+        border-color var(--h-dur),
+        background var(--h-dur),
+        opacity 0.55s var(--h-ease),
+        transform 0.55s var(--h-ease);
+}
+
+.h-card.is-in {
+    opacity: 1;
+    transform: none;
+}
+
+.h-card:hover {
+    border-color: rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.h-card.is-open {
+    border-color: rgba(255, 255, 255, 0.25);
+    background: rgba(255, 255, 255, 0.035);
+}
+
+/* Высота шапки постоянная и не зависит от раскрытия. Именно она и
+   наблюдается: если следить за самой плашкой, её рост во время
+   раскрытия сам же и сдвигает точку срабатывания. */
+.h-chead {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    height: 80px;
+}
+
+.h-cix {
+    font-family: var(--font-mono), monospace;
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    color: var(--h-fg-3);
+}
+
+.h-ct {
+    font-size: 16px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    color: rgba(255, 255, 255, 0.82);
+    transition: font-size 0.7s var(--h-ease), color var(--h-dur);
+}
+
+.h-card.is-open .h-ct {
+    font-size: 24px;
+    color: var(--h-fg);
+}
+
+.h-cbody {
+    opacity: 0;
+    transition: opacity 0.45s 0.12s;
+}
+
+.h-card.is-open .h-cbody {
+    opacity: 1;
+}
+
+.h-csvg {
+    height: 150px;
+    padding: 8px 0 22px;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.h-csvg svg {
+    width: 100%;
+    height: 100%;
+}
+
+.h-cnote {
+    border-top: 1px solid var(--h-line);
+    padding: 18px 0 26px;
+}
+
+.h-cnote p {
+    margin: 0;
+    max-width: 62ch;
+    font-size: var(--h-t-body);
+    line-height: 1.7;
+    color: var(--h-fg-2);
+}
+
+/* ── подвал ─────────────────────────────────────────────────────── */
+
+.h-tail {
+    padding: 26px 28px 40px;
+    border-top: 1px solid var(--h-line);
+    display: flex;
+    justify-content: space-between;
+    gap: 20px;
+    font-family: var(--font-mono), monospace;
+    font-size: var(--h-t-micro);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--h-fg-3);
+}
+
+.h-tail a {
+    color: var(--h-fg-2);
+    text-decoration: none;
+}
+
+.h-tail a:hover {
+    color: var(--h-fg);
+}
+
+/* ── меньше 900: приколотого блока нет, всё в один столбец ──────── */
+
+@media (max-width: 900px) {
+    .h-hero {
+        grid-template-columns: 1fr;
+        gap: 16px;
+        padding: 10px 20px 30px;
+    }
+
+    .h-head,
+    .h-head-r {
+        text-align: left;
+    }
+
+    .h-stage {
+        height: 42vh;
+        order: 3;
+    }
+
+    .h-navlinks {
+        display: none;
+    }
+
+    .h-about {
+        padding: 48px 20px 34px;
+    }
+
+    .h-pipeline {
+        padding: 48px 20px 60px;
+    }
+
+    .h-track {
+        height: auto;
+    }
+
+    .h-stick {
+        position: static;
+        height: auto;
+        display: block;
+    }
+
+    .h-plin {
+        flex-direction: column;
+        gap: 24px;
+    }
+
+    .h-left {
+        width: 100%;
+        transform: none !important;
+    }
+
+    .h-plh {
+        font-size: 24px;
+    }
+
+    .h-sum {
+        min-height: 0;
+    }
+
+    .h-right {
+        width: 100%;
+    }
+
+    .h-tail {
+        flex-direction: column;
+        gap: 10px;
+        padding: 22px 20px 34px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+    .h-shell *,
+    .h-shell *::before,
+    .h-shell *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+    }
+
+    .h-left {
+        transform: none !important;
+    }
+}
