@@ -33,212 +33,19 @@ a live link.*
 | Lint          | ruff                                     |
 | Tests         | pytest                                   |
 
-## Requirements
-
-- Python, managed via [uv](https://github.com/astral-sh/uv)
-- PostgreSQL 18 with the pgvector extension
-- CUDA 12.4 and a GPU with ≥3 GB VRAM — required by `transcribe` only.
-  `embed` and `search` currently run on CPU (see [Known limitations](#known-limitations)).
-- ~2.5 GB of free disk for the BGE-M3 weights, plus network access on first run
-- Node.js 20+ and npm — frontend only
-- A DeepSeek API key **with a non-zero balance**. There is no free grant: a new
-  account returns `granted_balance: "0.00"` from `GET /user/balance` and every
-  call fails until the account is topped up. The key is required to *import*
-  the pipeline at all — see [Configuration](#5-configuration).
-
 ## Setup
 
-### 1. Python environment
+Full installation instructions: **[docs/SETUP.md](docs/SETUP.md)**.
+
+Prerequisites: PostgreSQL 18 with pgvector, uv, Node.js 20+, a DeepSeek API key
+with a non-zero balance, and an NVIDIA GPU for transcription only.
+
+Once installed, three processes:
 
 ```bash
-uv sync
-```
-
-### 2. PostgreSQL 18 + pgvector
-
-The PGDG repository ships a prebuilt pgvector package; no compilation needed.
-
-```bash
-# add the PGDG repository
-sudo apt install -y postgresql-common
-sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh
-
-sudo apt install -y postgresql-18 postgresql-18-pgvector
-sudo systemctl enable --now postgresql
-```
-
-The pgvector package must match the server major version. Installing
-`postgresql-17-pgvector` next to a PostgreSQL 18 server leaves `CREATE EXTENSION`
-failing with a missing-file error that does not name the version mismatch.
-
-Verify:
-
-```bash
-psql --version
-ls /usr/lib/postgresql/18/lib/vector.so
-```
-
-### 3. Database, role, extension
-
-```bash
-sudo -u postgres psql
-```
-
-```sql
-CREATE ROLE ragbot LOGIN PASSWORD 'your-password-here';
-CREATE DATABASE ragbot OWNER ragbot;
-\c ragbot
-CREATE EXTENSION vector;
-GRANT CREATE ON SCHEMA public TO ragbot;
-```
-
-`CREATE EXTENSION` requires superuser and is per-database: it must be run inside
-`ragbot`, not in the default `postgres` database.
-`GRANT CREATE ON SCHEMA public` is not redundant either. Since PostgreSQL 15 the
-`public` schema no longer grants `CREATE` to every role by default, so a freshly
-created role fails on its first `CREATE TABLE` with a permission error — before
-any SQL in it is parsed.
-
-### 4. Schema
-
-Connect as the application role and apply the schema file:
-
-```bash
-psql "postgresql://ragbot:your-password-here@localhost:5432/ragbot" -f db/schema.sql
-```
-
-`db/schema.sql` is the single source of truth for the database structure. It is
-not idempotent by design: a second run against a populated database fails loudly
-instead of silently doing nothing.
-
-#### `embeddings`
-
-One row per chunk, `chunk_id` as primary key, `embedding` as `vector(1024)`.
-
-- Every column is `NOT NULL`. A row with a missing embedding or missing offsets
-  is not a degraded row, it is a broken one: it would be returned by search and
-  then fail at the point of use. The constraint turns a silent write into a
-  loud one.
-- `chunk_id` is `f"{video_id}:{segment_start_idx}"`, derived from the payload
-  rather than from runtime state, so it is stable across reruns.
-- `vector(1024)` matches BGE-M3 output. A different embedding model means a
-  different dimension and a new table.
-- The B-tree index on `video_id` supports the idempotency check. No vector index
-  is created — see [Retrieval](#retrieval).
-
-#### `jobs`
-
-One row per uploaded lecture awaiting processing. The upload endpoint inserts,
-the worker claims and updates, the status endpoint reads. Neither process knows
-the other exists.
-
-- `status` is constrained by `CHECK`. A typo written by the worker would produce
-  a row nobody can find again: not `queued`, so never claimed; not `done`, so
-  never closed. The job would disappear without an error anywhere. The
-  constraint rejects it at write time instead.
-- `stage` exists only to tell the user what is happening. No decision is taken
-  on it — neither whether to claim a row nor where to resume — because it is
-  written *before* the step runs and therefore records intent, not result.
-- `error` is nullable, and `NULL` means no failure occurred. An empty string
-  would collapse the difference between "no error" and "an error with no
-  message".
-- `created_at` defaults to `now()`, so the insert never carries a timestamp of
-  its own.
-
-**Rejected: resuming a partially processed job from its last stage.** It requires
-every stage to answer "how much of me is already done". Without that, re-running
-`embed` on a job that died halfway inserts duplicate chunks — same text, new
-embeddings, no error raised, and retrieval quietly returns the same fragment
-twice. Abandoned jobs are reset to `queued` and reprocessed from the start.
-
-### 5. Configuration
-
-```bash
-cp .env.example .env
-```
-
-`.env` is gitignored. Required variables:
-
-| Variable           | Example                                              | Notes                 |
-|--------------------|------------------------------------------------------|-----------------------|
-| `DATABASE_URL`     | `postgresql://ragbot:password@localhost:5432/ragbot` | read via `os.environ` |
-| `DEEPSEEK_API_KEY` | `sk-...`                                             | read via `os.environ` |
-
-`app/core/config.py` reads both with `os.environ[...]`, not `.get()`: a missing
-variable raises `KeyError` at import time rather than failing later with an
-obscure connection error.
-
-**`DEEPSEEK_API_KEY` blocks every stage, not just generation.** `config.py` is
-imported by `transcribe`, `chunk`, `embed` and `search` alike, and the
-subscript is evaluated at import. Without the key a fresh clone cannot even
-chunk a transcript, though chunking never talks to DeepSeek. This is a
-deliberate trade — one loud failure at import beats four quiet ones later — but
-it is a real cost for anyone who only wants the ingestion half.
-
-What the check does **not** cover: the key's validity and the account balance.
-An invalid key and a zero balance both pass the import silently and fail on the
-first API call, because verifying either requires a network round trip at import
-time.
-
-The DeepSeek key is displayed **once**, at creation, and cannot be recovered —
-only regenerated. Copy the whole value including the `sk-` prefix; a key without
-it returns `authentication_error`.
-
-Non-secret constants live in `app/core/config.py`, not in `.env`:
-`TARGET_TOKENS`, `OVERLAP_TOKENS`, `MODEL_NAME`, `TOP_K`, `DISTANCE_THRESHOLD`,
-`DEEPSEEK_BASE_URL`, `DEEPSEEK_MODEL`, `DEEPSEEK_MAX_TOKENS`, `DEEPSEEK_TIMEOUT`,
-`REWRITE_TIMEOUT`.
-
-The frontend reads one variable of its own, from `frontend/.env.local`:
-
-| Variable              | Example                 | Notes                          |
-|-----------------------|-------------------------|--------------------------------|
-| `NEXT_PUBLIC_API_URL` | `http://127.0.0.1:8000` | optional; falls back to that value |
-
-`NEXT_PUBLIC_` is not decoration: Next.js inlines only variables carrying that
-prefix into the browser bundle. The value is therefore public by construction
-and must never hold a secret. It has a fallback in code, so local development
-needs no `.env.local` at all — the file exists for deployment, where the API is
-not on the same host as the page.
-
-`DISTANCE_THRESHOLD` is corpus-specific and is not a portable constant — see
-[Evaluation](#evaluation).
-
-### 6. Model weights
-
-The first `embed` run downloads BGE-M3 from HuggingFace (~2.27 GB) and requires
-network access. Note that `chunk` only needs the tokenizer, so a successful
-`chunk` run does **not** mean the weights are cached.
-
-Once cached, set `HF_HUB_OFFLINE=1` to run fully offline — this skips
-revalidation calls to the Hub and removes any rate-limit exposure:
-
-```bash
-export HF_HUB_OFFLINE=1
-```
-
-### 7. Data directories
-
-Created on demand by the pipeline, except the input directory:
-
-```
-data/lectures/      # put your .mp4 files here
-data/transcripts/   # transcribe output
-data/chunks/        # chunk output
-logs/errors.log     # ERROR and above; INFO goes to stdout only
-```
-
-### 8. Frontend
-
-```bash
-cd frontend
-npm install
-```
-
-Optional, for a non-local API host:
-
-```bash
-echo 'NEXT_PUBLIC_API_URL=https://api.example.com' > frontend/.env.local
+uv run uvicorn app.api.main:app     # API      - http://127.0.0.1:8000
+uv run python -m app.worker         # worker   - without it uploads stay queued
+cd frontend && npm run dev          # frontend - http://localhost:3000
 ```
 
 ## Pipeline
@@ -251,14 +58,6 @@ uv run python -m app.ingestion.chunk             # transcript  → overlapping c
 uv run python -m app.ingestion.embed             # chunks      → pgvector rows
 uv run python -m app.retrieval.search "查询内容"   # query       → ranked chunks above threshold
 uv run python -m scripts.eval_queries            # query set   → measurement table
-uv run python -m app.worker                      # polls jobs table → claims queued rows
-uv run uvicorn app.api.main:app --reload   # HTTP        → SSE: sources + answer tokens
-```
-
-Frontend, from `frontend/` in a second shell:
-
-```bash
-npm run dev                                # http://localhost:3000
 ```
 
 Module invocation (`-m`) is not cosmetic. Running a file by path puts its own
@@ -315,6 +114,53 @@ re-measuring:
 Changing any of these invalidates the transcripts, the chunks **and** the
 calibrated `DISTANCE_THRESHOLD` — and `embed` will not notice, because its skip
 check keys on `video_id` alone. Delete the affected rows before re-embedding.
+
+## Schema
+
+`db/schema.sql` is the single source of truth for the database structure. It is
+not idempotent by design: a second run against a populated database fails loudly
+instead of silently doing nothing. Applying it is
+[step 3 of the setup](docs/SETUP.md#3-schema).
+
+### `embeddings`
+
+One row per chunk, `chunk_id` as primary key, `embedding` as `vector(1024)`.
+
+- Every column is `NOT NULL`. A row with a missing embedding or missing offsets
+  is not a degraded row, it is a broken one: it would be returned by search and
+  then fail at the point of use. The constraint turns a silent write into a
+  loud one.
+- `chunk_id` is `f"{video_id}:{segment_start_idx}"`, derived from the payload
+  rather than from runtime state, so it is stable across reruns.
+- `vector(1024)` matches BGE-M3 output. A different embedding model means a
+  different dimension and a new table.
+- The B-tree index on `video_id` supports the idempotency check. No vector index
+  is created — see [Retrieval](#retrieval).
+
+### `jobs`
+
+One row per uploaded lecture awaiting processing. The upload endpoint inserts,
+the worker claims and updates, the status endpoint reads. Neither process knows
+the other exists.
+
+- `status` is constrained by `CHECK`. A typo written by the worker would produce
+  a row nobody can find again: not `queued`, so never claimed; not `done`, so
+  never closed. The job would disappear without an error anywhere. The
+  constraint rejects it at write time instead.
+- `stage` exists only to tell the user what is happening. No decision is taken
+  on it — neither whether to claim a row nor where to resume — because it is
+  written *before* the step runs and therefore records intent, not result.
+- `error` is nullable, and `NULL` means no failure occurred. An empty string
+  would collapse the difference between "no error" and "an error with no
+  message".
+- `created_at` defaults to `now()`, so the insert never carries a timestamp of
+  its own.
+
+**Rejected: resuming a partially processed job from its last stage.** It requires
+every stage to answer "how much of me is already done". Without that, re-running
+`embed` on a job that died halfway inserts duplicate chunks — same text, new
+embeddings, no error raised, and retrieval quietly returns the same fragment
+twice. Abandoned jobs are reset to `queued` and reprocessed from the start.
 
 ## Retrieval
 
@@ -523,7 +369,7 @@ repository root:
 uv run uvicorn app.api.main:app --reload
 ```
 
-This is the one stage not invoked with `python3 -m`: uvicorn imports the module
+This is the one stage not invoked with `python -m`: uvicorn imports the module
 and needs the app object named. Interactive docs at `http://127.0.0.1:8000/docs`.
 `--reload` re-imports the module on every file change, and the module loads
 2.27 GB of weights at import, so drop the flag when not editing.
@@ -832,9 +678,11 @@ app/
   retrieval/   # search
   generation/  # prompts.py (strings), generate.py (prompt assembly + API call)
   api/         # main.py — FastAPI app over search()
+db/            # schema.sql — the single source of truth for the database
+docs/          # SETUP.md — installation and operation
 frontend/      # Next.js app — search UI
 scripts/       # measurement helpers: eval_queries, measure_chunk_lengths, snapshot
-tests/       # queries.json — the evaluation set; test_chunk_transcript.py — tail-branch regression
+tests/         # queries.json — the evaluation set; test_chunk_transcript.py — tail-branch regression
 ```
 
 Absolute imports from `app`; every stage is invoked as a module from the repo
@@ -1068,6 +916,7 @@ time it feels inconvenient.
 |---|---|
 | LangChain | The pipeline is four explicit stages; a framework would hide exactly the parts this project exists to demonstrate. |
 | IVFFlat / HNSW | An approximate index trades recall for speed and changes the answer, not just the time. At 29 chunks the exact scan *is* the ground truth. Revisit above ~500 chunks. |
+| Resuming a partially processed job from its last stage | Every stage would have to answer "how much of me is already done"; without that, a half-finished `embed` inserts duplicate chunks and retrieval returns the same fragment twice. |
 | Two standalone queries instead of history in generation | A standalone query preserves referents but not the conversation: "say that shorter" and "no, I meant the second one" have nothing to attach to. |
 | Sending misses in the conversation history | An empty or half-delivered answer becomes the referent the next pronoun resolves against. |
 | Server-side conversation storage | Requires auth, which does not exist. `localStorage` costs nothing and survives a refresh. |
