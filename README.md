@@ -4,6 +4,8 @@ Semantic search and Q&A over Chinese-language lecture videos.
 A transcription-first RAG pipeline: video → transcript → chunks → embeddings →
 vector search → generated answer.
 
+**[Setup](docs/SETUP.md)** · [Architecture](#schema) · [Known limitations](#known-limitations)
+
 ## Demo
 
 
