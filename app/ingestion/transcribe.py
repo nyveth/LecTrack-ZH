@@ -17,6 +17,7 @@ def transcribe_file(
     video_path: Path, model: WhisperModel, transcripts_dir: Path
 ) -> FileResult:
     """Transcribe one lecture video to a JSON transcript."""
+    transcripts_dir.mkdir(parents=True, exist_ok=True)
     file_name = video_path.stem
     out_file = transcripts_dir / f"{file_name}.json"
 
@@ -73,8 +74,8 @@ def main() -> None:
 
     TRANSCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    model_size = "small"
-    model = WhisperModel(model_size, device="cuda", compute_type="int8")
+    model_size = "large-v3"
+    model = WhisperModel(model_size, device="cuda", compute_type="float16")
 
     counts = Counter()
     failed = 0

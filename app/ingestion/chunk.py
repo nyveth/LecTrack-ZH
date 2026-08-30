@@ -107,6 +107,7 @@ def chunk_file(
     overlap_tokens: int,
 ) -> FileResult:
     """Split transcripts into overlapping token-bounded chunks."""
+    chunks_dir.mkdir(parents=True, exist_ok=True)
     final_path = chunks_dir / transcript_path.name
 
     # mtime-only invalidation: an edit preserving mtime is missed

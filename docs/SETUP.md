@@ -206,7 +206,7 @@ database; neither knows the other exists.
 
 ```bash
 uv run uvicorn app.api.main:app          # API      - http://127.0.0.1:8000
-uv run python -m app.worker              # worker   - polls the jobs table
+./scripts/run_worker.sh                  # worker   - polls the jobs table
 cd frontend && npm run dev               # frontend - http://localhost:3000
 ```
 

@@ -8,6 +8,8 @@ requires-python = ">=3.13"
 dependencies = [
     "fastapi[standard]>=0.139.0",
     "faster-whisper>=1.2.1",
+    "nvidia-cublas-cu12>=12.9.2.10",
+    "nvidia-cudnn-cu12==9.*",
     "openai>=2.50.0",
     "pgvector>=0.5.0",
     "psycopg[binary]>=3.3.4",

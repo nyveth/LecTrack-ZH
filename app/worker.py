@@ -96,7 +96,12 @@ def process_job(
 def main() -> None:
     conn = psycopg.connect(DATABASE_URL, autocommit=True)
     register_vector(conn)
-    transcribe_model = WhisperModel("small", device="cuda", compute_type="int8")
+    #transcribe_model = WhisperModel("small", device="cuda", compute_type="int8")
+    transcribe_model = WhisperModel(
+    "large-v3",
+    device="cuda",
+    compute_type="float16",
+)
     embed_model = SentenceTransformer(MODEL_NAME)
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 

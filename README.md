@@ -4,7 +4,7 @@ Semantic search and Q&A over Chinese-language lecture videos.
 A transcription-first RAG pipeline: video → transcript → chunks → embeddings →
 vector search → generated answer.
 
-**[Setup](docs/SETUP.md)** · [Architecture](#schema) · [Known limitations](#known-limitations)
+**[Setup](docs/SETUP.md)** · **[Startup audit](docs/STARTUP_AUDIT.md)** · [Architecture](#schema) · [Known limitations](#known-limitations)
 
 ## Demo
 
@@ -46,7 +46,7 @@ Once installed, three processes:
 
 ```bash
 uv run uvicorn app.api.main:app     # API      - http://127.0.0.1:8000
-uv run python -m app.worker         # worker   - without it uploads stay queued
+./scripts/run_worker.sh             # worker   - without it uploads stay queued
 cd frontend && npm run dev          # frontend - http://localhost:3000
 ```
 
