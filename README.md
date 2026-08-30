@@ -246,12 +246,12 @@ echo 'NEXT_PUBLIC_API_URL=https://api.example.com' > frontend/.env.local
 Run every stage from the repository root as a module:
 
 ```bash
-python3 -m app.ingestion.transcribe        # .mp4        → transcript JSON
-python3 -m app.ingestion.chunk             # transcript  → overlapping chunks JSON
-python3 -m app.ingestion.embed             # chunks      → pgvector rows
-python3 -m app.retrieval.search "查询内容"   # query       → ranked chunks above threshold
-python3 -m scripts.eval_queries            # query set   → measurement table
-python3 -m app.worker                      # polls jobs table → claims queued rows
+uv run python -m app.ingestion.transcribe        # .mp4        → transcript JSON
+uv run python -m app.ingestion.chunk             # transcript  → overlapping chunks JSON
+uv run python -m app.ingestion.embed             # chunks      → pgvector rows
+uv run python -m app.retrieval.search "查询内容"   # query       → ranked chunks above threshold
+uv run python -m scripts.eval_queries            # query set   → measurement table
+uv run python -m app.worker                      # polls jobs table → claims queued rows
 uv run uvicorn app.api.main:app --reload   # HTTP        → SSE: sources + answer tokens
 ```
 
@@ -682,7 +682,7 @@ of the retrieved chunk. This makes the check mechanical rather than editorial,
 which matters here because the corpus is in a language the author does not read.
 
 ```bash
-python3 -m scripts.eval_queries
+uv run python -m scripts.eval_queries
 ```
 
 ```
