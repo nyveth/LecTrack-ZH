@@ -37,9 +37,6 @@ export default function Home() {
             </a>
           </div>
 
-          <Link className="h-bracket" href="/chat">
-            Open search
-          </Link>
         </nav>
 
         {/* Заголовок разорван на месте превращения: слева вход, справа
