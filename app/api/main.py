@@ -1,13 +1,14 @@
 import json
 import logging
 import shutil
+from datetime import date
 from pathlib import Path
 from uuid import uuid4
 
 import psycopg
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pgvector.psycopg import register_vector
 from psycopg.rows import dict_row
 from pydantic import BaseModel, Field
@@ -19,6 +20,8 @@ from app.core.config import (
     LECTURES_DIR,
     LLM_UNAVAILABLE_DETAIL,
     MODEL_NAME,
+    SEARCH_DAILY_LIMIT,
+    SEARCH_IP_DAILY_LIMIT,
     TOP_K,
 )
 from app.core.log_config import setup_logging
@@ -52,6 +55,10 @@ model = SentenceTransformer(MODEL_NAME)
 
 conn = psycopg.connect(DATABASE_URL, autocommit=True)
 register_vector(conn)
+
+search_count = 0
+search_count_by_ip = {}
+search_count_date = date.today()
 
 
 def sse(event, data):
@@ -200,3 +207,48 @@ def get_status(job_id: int):
     if result is None:
         raise HTTPException(status_code=404, detail="Job not found!")
     return result
+
+
+@app.middleware("http")
+async def limit(request, call_next):
+    global search_count
+    global search_count_by_ip
+    global search_count_date
+
+    # Ограничиваем только /search
+    if request.url.path != "/search":
+        return await call_next(request)
+
+    today = date.today()
+
+    # Новый день — сбрасываем оба счётчика
+    if today != search_count_date:
+        search_count = 0
+        search_count_by_ip = {}
+        search_count_date = today
+
+    # Определяем IP клиента
+    client_ip = request.client.host if request.client else "unknown"
+
+    # Проверяем глобальный дневной лимит
+    if search_count >= SEARCH_DAILY_LIMIT:
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Daily search limit exceeded."},
+        )
+
+    # Получаем количество запросов этого IP
+    ip_count = search_count_by_ip.get(client_ip, 0)
+
+    # Проверяем дневной лимит IP
+    if ip_count >= SEARCH_IP_DAILY_LIMIT:
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Daily search limit for this IP exceeded."},
+        )
+
+    # Запрос разрешён — увеличиваем оба счётчика
+    search_count += 1
+    search_count_by_ip[client_ip] = ip_count + 1
+
+    return await call_next(request)

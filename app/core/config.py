@@ -55,3 +55,6 @@ POLL_INTERVAL = 5
 LLM_UNAVAILABLE_DETAIL = (
     "We were unable to generate a response at this time. Please try again later."
 )
+
+SEARCH_DAILY_LIMIT = 100
+SEARCH_IP_DAILY_LIMIT = 20
