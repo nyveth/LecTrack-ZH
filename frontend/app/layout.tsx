@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google";
+import { IBM_Plex_Sans, IBM_Plex_Mono, Noto_Sans_SC } from "next/font/google";
 
 import "./globals.css";
 // Second, so the theme layer wins over Tailwind's preflight.
@@ -31,6 +31,17 @@ const plexMono = IBM_Plex_Mono({
   display: "swap",
 });
 
+// Chinese needs its own face: Plex carries no CJK glyphs, and without a
+// declared one every character falls through to whatever the machine
+// happens to have. Self-hosted for the same reason as Plex, though this
+// family is large and the build pays for it.
+const notoSC = Noto_Sans_SC({
+  variable: "--font-noto-sc",
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  display: "swap",
+});
+
 export const metadata: Metadata = {
   title: "LecTrack-ZH",
   description: "Semantic search and Q&A over Chinese engineering lectures",
@@ -49,7 +60,7 @@ export default function RootLayout({
       // auto height computes to auto — the shell then collapses to its
       // content and the composer rides up under the last answer instead
       // of staying pinned to the bottom of the viewport.
-      className={`${plexSans.variable} ${plexMono.variable} h-full`}
+      className={`${plexSans.variable} ${plexMono.variable} ${notoSC.variable} h-full`}
       // One face everywhere, served from our own origin, so the interface
       // is identical on every machine.
       //
@@ -58,7 +69,7 @@ export default function RootLayout({
       // Latin and Cyrillic hit Plex; Chinese falls through to Noto.
       style={
         {
-          "--font-body": `var(--font-plex-sans), "Noto Sans SC", system-ui, sans-serif`,
+          "--font-body": `var(--font-plex-sans), var(--font-noto-sc), system-ui, sans-serif`,
           "--font-mono": `var(--font-plex-mono), ui-monospace, monospace`,
         } as React.CSSProperties
       }
