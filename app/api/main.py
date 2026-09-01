@@ -45,6 +45,8 @@ app.add_middleware(
         "http://127.0.0.1:3000",
         "http://localhost:3000",
         "https://debian.tail809005.ts.net",
+        "https://nyveth.xyz",
+        "https://www.nyveth.xyz",
     ],
     allow_methods=["POST", "OPTIONS", "GET"],
     allow_headers=["*"],
