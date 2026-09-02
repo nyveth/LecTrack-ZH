@@ -4,42 +4,52 @@ Semantic search and Q&A over Chinese-language lecture videos.
 A transcription-first RAG pipeline: video → transcript → chunks → embeddings →
 vector search → generated answer.
 
-**[Setup](docs/SETUP.md)** · [Architecture](#schema) · [Known limitations](#known-limitations)
+**[Live demo](#demo)** · [Setup](docs/SETUP.md) · [Deployment](#deployment) ·
+[Architecture](#pipeline) · [Known limitations](#known-limitations)
 
 ## Demo
 
+**[nyveth.xyz](https://nyveth.xyz)**
+
+The frontend is on Vercel and is always up. The API is not hosted: it runs on
+the machine that owns the GPU, and that machine is not kept running around the
+clock. Outside demo hours the page loads and search returns a connection error.
+This is a deliberate trade, not an outage — see [Deployment](#deployment).
 
 https://github.com/user-attachments/assets/330158a7-0056-46d7-b5bb-32151f0eee4a
 
-
 *A question in English against a Chinese lecture corpus: retrieval finds the
-relevant chunks, DeepSeek generates the answer, and the sources with
-timestamps let the user verify it against the video.*
+relevant chunks, DeepSeek generates the answer, and the sources with timestamps
+let the user verify it against the video.*
 
 *The recording predates the current frontend — the design system was replaced
-on 12 Aug. The public deployment scheduled for 01 Sep replaces this video with
-a live link.*
+on 12 Aug.*
 
 ## Stack
 
-| Layer         | Tool                                     |
-|---------------|------------------------------------------|
-| Transcription | faster-whisper (CTranslate2, CUDA, int8) |
-| Embeddings    | BGE-M3 via sentence-transformers         |
-| Vector store  | pgvector on PostgreSQL 18                |
-| DB driver     | psycopg 3 (synchronous)                  |
-| Generation    | DeepSeek via the `openai` SDK            |
-| API           | FastAPI + uvicorn                        |
-| Transport     | Server-Sent Events (token streaming)     |
-| Frontend      | Next.js (App Router, TypeScript, Tailwind) |
-| Lint          | ruff                                     |
-| Tests         | pytest                                   |
+| Layer          | Tool                                       |
+|----------------|--------------------------------------------|
+| Transcription  | faster-whisper (CTranslate2, CUDA, int8)   |
+| Embeddings     | BGE-M3 via sentence-transformers           |
+| Vector store   | pgvector on PostgreSQL 16+                 |
+| DB driver      | psycopg 3 (synchronous)                    |
+| Generation     | DeepSeek via the `openai` SDK              |
+| API            | FastAPI + uvicorn                          |
+| Transport      | Server-Sent Events (token streaming)       |
+| Frontend       | Next.js (App Router, TypeScript, Tailwind) |
+| Frontend host  | Vercel                                     |
+| API exposure   | Tailscale Funnel                           |
+| Lint           | ruff                                       |
+| Tests          | pytest                                     |
+
+Developed on PostgreSQL 18; reproduced on 16.14 with pgvector 0.8.0 during an
+independent install on a different distribution.
 
 ## Setup
 
 Full installation instructions: **[docs/SETUP.md](docs/SETUP.md)**.
 
-Prerequisites: PostgreSQL 18 with pgvector, uv, Node.js 20+, a DeepSeek API key
+Prerequisites: PostgreSQL 16+ with pgvector, uv, Node.js 20+, a DeepSeek API key
 with a non-zero balance, and an NVIDIA GPU for transcription only.
 
 Once installed, three processes:
@@ -49,6 +59,50 @@ uv run uvicorn app.api.main:app     # API      - http://127.0.0.1:8000
 uv run python -m app.worker         # worker   - without it uploads stay queued
 cd frontend && npm run dev          # frontend - http://localhost:3000
 ```
+
+## Deployment
+
+Two halves, deployed differently, joined by CORS.
+
+The frontend is a Next.js build on Vercel behind `nyveth.xyz`. The API is
+exposed straight from the development machine through Tailscale Funnel:
+
+```bash
+sudo tailscale funnel --bg 8000     # https://<host>.ts.net → 127.0.0.1:8000
+```
+
+`--bg` survives a reboot, and Tailscale issues the TLS certificate itself. The
+browser calls the Funnel hostname directly, so the API's CORS allowlist carries
+the Vercel origin and nothing sits between the two.
+
+Decisions:
+
+- **The API stays on the local machine.** `transcribe` needs a GPU; hosted CPU
+  transcription runs tens of minutes per lecture, which is worse than not
+  offering the feature. A rented GPU host is not worth a monthly bill for a
+  portfolio demo. The cost of that choice is availability, stated plainly at
+  the top of this file rather than hidden.
+- **Tailscale Funnel, not Cloudflare Tunnel.** Cloudflare tunnels were built
+  and abandoned: on this connection the session to the Cloudflare edge is
+  terminated after two to three minutes, silently and reproducibly, on both
+  QUIC and HTTP/2. Funnel held where Cloudflare did not. Measured from
+  check-host.net, HTTP 200 from every node: 0.238 s Frankfurt, 0.271 s London,
+  0.288 s Amsterdam, 0.380 s Zurich. Long-run stability over hours has not
+  been measured.
+- **The browser calls the Funnel URL directly, not through a Next.js rewrite.**
+  A rewrite would put Vercel's edge in front of the API, and every request
+  would arrive from the same address — collapsing the per-IP rate limit into a
+  second global one. Funnel forwards the real client address, so nothing has to
+  parse `X-Forwarded-For`, and parsing it would make the limit forgeable by any
+  caller willing to set a header.
+- **CORS is not access control.** An allowlist is a rule the browser enforces
+  on itself; `curl` ignores it entirely. The Funnel hostname is also public the
+  moment its certificate is issued, because Certificate Transparency logs are
+  public. What bounds cost is the rate limit, not the origin list.
+
+Funnel constraints worth knowing before copying this setup: ports are limited
+to 443, 8443 and 10000, a custom domain cannot be attached, and there is an
+unpublished bandwidth ceiling.
 
 ## Pipeline
 
@@ -100,6 +154,10 @@ the environment. To change them, edit that function:
 model = WhisperModel("small", device="cuda", compute_type="int8")
 segments, info = model.transcribe(path, beam_size=5, language="zh")
 ```
+
+`app/worker.py` builds its own model and does not read this one. Changing the
+CLI alone leaves uploads processed by the old settings — see
+[Known limitations](#known-limitations).
 
 Three of these values are deliberate and should not be raised without
 re-measuring:
@@ -251,10 +309,10 @@ Decisions:
   raise no error and have no effect.
 - **`max_tokens` caps the output only.** Input size is set by `TOP_K` and by
   chunk length (up to 255 s of speech per chunk), so `max_tokens` is not a cost
-  ceiling for the request. A measured call sat at 1542 total tokens with 
+  ceiling for the request. A measured call sat at 1542 total tokens with
   `finish_reason: stop` — the cap was never reached. That measurement was taken
-  at `max_tokens=800`; the current value is 1000, and no observed call has reached
-  it either.
+  at `max_tokens=800`; the current value is 1000, and no observed call has
+  reached it either.
 - **A non-empty `chunks` list is a precondition, not something the function
   re-checks.** Threshold filtering happens in the endpoint, so "nothing passed
   the cutoff" is decided before generation is reached and costs zero API calls.
@@ -383,6 +441,7 @@ and needs the app object named. Interactive docs at `http://127.0.0.1:8000/docs`
 | `200`        | `text/event-stream` — see the frame table below |
 | `200`, no match | the same stream: a `sources` frame carrying `[]`, then `done` |
 | `422`        | body fails validation (length, type, missing field) |
+| `429`        | the per-IP or the global daily search budget is exhausted |
 | `503`        | query rewriting unavailable — raised before the stream opens |
 
 Constraints are declared on the pydantic models, not checked in the handler:
@@ -432,8 +491,8 @@ Decisions:
 - **The response shape is constant across outcomes.** "Found" and "found
   nothing" differ in content, not in structure: the client reads the same
   frames either way. Distinguishable outcomes that need distinguishable
-  *handling* get distinguishable signals instead — `422` and `503` are separate
-  statuses, not sentinel values inside a `200`.
+  *handling* get distinguishable signals instead — `422`, `429` and `503` are
+  separate statuses, not sentinel values inside a `200`.
 - **An empty retrieval result exits before generation.** The LLM call is paid
   and there is nothing to generate from; the early return costs zero API calls.
 - **Provider failure maps to `503`, not `500`.** `500` means a bug in this
@@ -474,7 +533,34 @@ Decisions:
   `OPTIONS` shows up as a `POST` that never appears in the access log while the
   `OPTIONS` does — a symptom that points at the handler and is not in the
   handler.
-- **CORS is enabled for the local Next.js origin only.**
+- **The CORS allowlist carries the local Next.js origin and the deployed
+  frontend origin.** Vercel preview deployments get unpredictable hostnames and
+  are deliberately left out: they are development surfaces, and widening the
+  list to a wildcard would trade a real boundary for convenience.
+
+### Rate limiting
+
+`/search` is metered by a middleware in `app/api/main.py`. Two ceilings, both
+constants in `core/config.py`: `SEARCH_IP_DAILY_LIMIT` per client address and
+`SEARCH_DAILY_LIMIT` across all callers. Over either one, the request is
+answered with `429` before any embedding or provider call happens.
+
+- **In-process counters, not Redis.** One uvicorn process serves the demo, so
+  there is no state to share across processes and nothing for a broker to
+  coordinate. Module-level dictionaries reset when the date changes. A second
+  process would make this wrong immediately, and that is the trigger to
+  revisit, not the traffic volume.
+- **The global ceiling is the spend control; the per-IP one is the fairness
+  control.** A per-IP limit alone is defeated by any VPN, so it cannot bound
+  what the demo costs. The global ceiling bounds it, and pays for that with a
+  self-denial surface — see [Known limitations](#known-limitations).
+- **Authentication was rejected as the spend control.** Free registration caps
+  no spend; it moves the same unbounded usage behind a signup form and puts a
+  closed door in front of a demo. Auth is an access-control feature and is
+  scheduled as one.
+- **Verified against the live deployment, not assumed.** Tailscale Funnel
+  forwards the real client address, confirmed by logging it; three consecutive
+  requests against a limit of 2 returned `200`, `200`, `429`.
 
 ## Frontend
 
@@ -514,8 +600,13 @@ Decisions:
   the flag holds an incomplete character back rather than emitting a
   replacement glyph. Frames are separated by `\n\n`, so the trailing piece of
   every read is kept in a buffer until its boundary arrives.
+- **Fonts are self-hosted through `next/font`, with no runtime `@import`.**
+  A `@import` from a font CDN inside `theme.css` makes the production build
+  depend on that CDN being reachable, which is a build failure on a restricted
+  network and a render-blocking request on every page load for everyone else.
 - **The API base URL comes from `NEXT_PUBLIC_API_URL`,** with a localhost
-  fallback so a fresh clone runs without configuration.
+  fallback so a fresh clone runs without configuration. The fallback is also a
+  hazard in a deployed build — see [Known limitations](#known-limitations).
 
 ## Evaluation
 
@@ -680,6 +771,7 @@ app/
   retrieval/   # search
   generation/  # prompts.py (strings), generate.py (prompt assembly + API call)
   api/         # main.py — FastAPI app over search()
+  worker.py    # polls the jobs table, runs the pipeline for one job at a time
 db/            # schema.sql — the single source of truth for the database
 docs/          # SETUP.md — installation and operation
 frontend/      # Next.js app — search UI
@@ -703,8 +795,136 @@ root, never as a bare script path.
 | generation | ✓ error boundary, truncation check, logged failures, token streaming |
 | multi-turn | ✓ query rewriting before retrieval; threshold benchmark passed on EN, zh unmeasured |
 | frontend   | ✓ chat UI, streamed tokens, local conversations, folded sources   |
+| upload     | ✓ jobs table, polling worker, atomic claim; no auth, no rate limit |
+| deployment | ✓ frontend on Vercel, API through Tailscale Funnel, per-IP and daily caps |
 
 ## Known limitations
+
+### Availability and operations
+
+- **The public API is up only when the machine is.** The GPU host is a desk
+  machine, not a server, and it is brought up for demos rather than kept
+  running. The Vercel frontend stays reachable either way, so the failure the
+  visitor sees is a working page whose search cannot connect. Naming it is the
+  fix that was chosen; hosting the API is the fix that was not.
+- **Funnel stability past a few minutes is unmeasured.** Latency and reachability
+  were checked from four European nodes at a single point in time. Nothing has
+  observed the tunnel across hours of idle time, which is exactly the interval
+  a visitor arrives in.
+- **The daily search ceiling is a self-denial surface.** Whoever exhausts
+  `SEARCH_DAILY_LIMIT` first closes the demo for everyone else until the date
+  changes. That is the price of bounding spend without auth, and the cheapest
+  attack against the demo is also the least interesting one.
+- **The rate limiter resets at midnight and forgets on restart.** Counters are
+  in memory, so a process restart clears them; a burst inside one day is not
+  smoothed, only stopped at the ceiling; and the per-IP dictionary grows with
+  every distinct address, which an IPv6 client can supply indefinitely. A token
+  bucket keyed on an account, in shared storage, is the production shape. This
+  is not that.
+- **`/upload` has neither auth nor a rate limit.** Any caller can queue an mp4
+  and occupy the GPU for the length of a transcription, and nothing bounds the
+  size or number of files accepted. It is closed by not exposing the machine
+  rather than by code.
+- **Throughput has never been measured.** No load test has been run against
+  `/search`. The concurrency ceiling below is derived from the code, not
+  observed, and the two should not be confused.
+- **`NEXT_PUBLIC_API_URL` falls back to localhost.** The fallback exists so a
+  fresh clone runs without configuration, and it means a deployed build with
+  the variable unset does not fail: it silently asks the visitor's own machine
+  for the API. A missing variable should stop the build instead.
+- **A failed job is retried by hand.** The worker only claims `queued`, so a job
+  left in `failed` stays there until someone runs
+  `UPDATE jobs SET status='queued', stage=NULL, error=NULL WHERE id=...`.
+  There is no retry endpoint and no button.
+- **A job left in `running` by a dead worker is never reclaimed.** `status`
+  records that a worker took the row, not that a worker is alive. Nothing
+  detects the difference, so the row is invisible to every future claim.
+- **The connection is opened at import and never reopened.** If PostgreSQL
+  restarts, or the connection drops, the API process must be restarted with it.
+
+### Installation and platform
+
+- **The install was reproduced once on another machine, and it failed.** An
+  independent run on an RPM-based distribution with a different GPU exposed
+  three blockers before the pipeline started: package instructions written for
+  APT only, `pg_hba.conf` defaulting to `ident` for local TCP, and missing CUDA
+  math libraries. [docs/SETUP.md](docs/SETUP.md) now covers all three; it has
+  been reproduced on two platforms, which is two more than zero and far fewer
+  than enough.
+- **An NVIDIA driver is not a CUDA runtime.** `nvidia-smi` can list the GPU and
+  `ctranslate2` can count devices while `transcribe` still dies on
+  `libcublas.so.12`. cuBLAS and cuDNN ship separately from the driver, and the
+  probe that reports device capability does not load them, so the failure
+  arrives at the first matrix multiply rather than at startup.
+- **The Whisper configuration exists in two places.** The CLI builds its model
+  in `app/ingestion/transcribe.py`; the worker builds its own in
+  `app/worker.py`. Editing one does not affect the other, and a running worker
+  keeps the model it loaded at startup regardless of either. Neither the
+  transcript nor the embedding rows record which model produced them.
+- **The worker path does not create its output directories.**
+  `transcribe_file()` and `chunk_file()` rely on `main()` having created
+  `data/transcripts` and `data/chunks`, and the worker calls them directly. On a
+  machine where those directories do not exist yet, an upload transcribes
+  successfully and then dies with `FileNotFoundError` on the write.
+- **The DeepSeek key blocks every stage, not just generation.** `config.py` is
+  imported by `transcribe`, `chunk`, `embed` and `search` alike, and reads the
+  key with `os.environ[...]` at import. A fresh clone cannot chunk a transcript
+  without a key, though chunking never talks to DeepSeek. One loud failure at
+  import was preferred to four quiet ones later; the cost falls on anyone who
+  wants only the ingestion half.
+
+### Retrieval and the threshold
+
+- **The threshold cuts relevant chunks, not only noise.** Observed at 0.5815: a
+  chunk listing the actual pin assignments for the experiment, containing the
+  queried term eight times, sat above the 0.55 cutoff and was dropped. The
+  mirror-image failure was seen in the same week — chunks passing the cutoff on
+  a query they did not answer. Both follow from a threshold calibrated on 5
+  concepts over 29 chunks; neither is fixed by moving the number.
+- **The threshold margin is thin.** 0.55 sits 0.029 above the worst measured
+  hit and 0.050 below the best measured noise. One slightly harder query would
+  push a valid hit past the cutoff.
+
+  Case sensitivity was then measured systematically across the 7 evaluation
+  concepts: lowercasing the English query shifts top-1 distance by at most
+  ±0.009, changes no outcome, and never displaces the top-1 chunk (top-3
+  membership shifts in 2 of 7). One query outside that set behaves differently:
+  "How does a counter work in Verilog" retrieves at 0.5170, and the same query
+  with `verilog` lowercased falls past the 0.55 cutoff — a shift of at least
+  +0.033, and the difference between an answer and "nothing found". The proper
+  noun is the only structural difference from the 7 concepts, which suggests
+  the effect scales with how unusual the casing is for that token rather than
+  with casing as such. One observation, not a measured effect.
+- **`TOP_K = 5` can spend slots on near-duplicate chunks.** Chunking overlaps by
+  design, so two retrieved chunks may share most of their text. Observed: five
+  results of which two were largely the same passage. Input tokens are paid for
+  all five, and `max_tokens` does not cap input.
+- **`TOP_K = 5` also means slot competition between lectures.** As the corpus
+  grows, chunks from a newly added lecture can displace chunks that previously
+  answered a question, with no error and no signal — the answer simply gets
+  worse. Reranking over a wider `k`, MMR-style diversification, or per-lecture
+  boosting are the candidate fixes; none is implemented, and the case is
+  recorded as a concrete eval target.
+- **`TOP_K = 5` on a 29-chunk corpus returns a sixth of the database.** Ranking
+  at this scale is weakly informative; the numbers only become meaningful once
+  the corpus is substantially larger than `k`.
+- **Retrieval output cannot be judged by eye.** Results come back in Chinese.
+  The `expect_terms` check makes pass/fail mechanical, but diagnosing *why* a
+  query failed still requires an intermediary. This is the open blocker for
+  analysing false positives at scale.
+- **The evaluation set is small and partly non-blind.** 2 noise concepts across
+  3 videos in 1.5 domains. `管脚分配` and `红烧肉怎么做` were both run in earlier
+  sessions, so they are not blind; they are kept because they are the only
+  anchor to pre-existing measurements. `pin_assignment` also uses a bare noun
+  phrase in Chinese against full questions in Russian and English, which is the
+  same formulation drift the rest of the set was cleaned of.
+- **The threshold filter is duplicated.** The same list comprehension lives in
+  `main()` of `search.py` and in the endpoint. A threshold change requires
+  editing both. The fix is a `max_distance=None` parameter on `search()`, so the
+  filter has one home and the caller supplies the policy; deferred until a third
+  caller exists, because at two the indirection costs more than the duplication.
+
+### Generation
 
 - **The model extrapolates when the retrieved context is thin.** Observed: a
   question about clock generation returned chunks in which the lecturer said
@@ -712,7 +932,6 @@ root, never as a bare script path.
   Verilog construction from pre-training, phrased as if it came from the source.
   The system prompt forbids exactly this. A prompt is a request, not a
   mechanism — anything that must hold has to hold in code.
-
 - **The answer language is emergent, not enforced.** It usually follows the
   query language regardless of what the prompt requests (measured across two
   prompt configurations, three query languages each — see
@@ -724,18 +943,23 @@ root, never as a bare script path.
   Chinese and Russian queries have not been re-measured since the change, and
   there is still no post-generation verification, so nothing *prevents* the
   wrong language from reaching a user.
+- **A conversation grows the prompt every turn.** `<history>` carries the last
+  two questions and the last answer in full, so input tokens per request rise
+  with the length of the thread. Nothing truncates by token count — the bound
+  is a turn count, which is a proxy, not a limit.
+- **Provider disconnection mid-stream is untested.** The three `openai`
+  exception classes are caught around `iter_answer_tokens()`, but the branch
+  has never been triggered against a real interruption; only the timeout path
+  was forced and observed.
+- **The "no answer in the corpus" path has executed once, unplanned.** During
+  the rewrite benchmark, generation received two above-threshold chunks and a
+  question they could not answer, and stated that the fragments contain no such
+  information instead of extrapolating. The refusal rule works in at least one
+  configuration. The designed test — a term from the corpus crossed with an
+  aspect the lectures do not cover — has still not run, and one execution says
+  little about the `<history>`/`<context>` separation in general.
 
-- **The threshold cuts relevant chunks, not only noise.** Observed at 0.5815: a
-  chunk listing the actual pin assignments for the experiment, containing the
-  queried term eight times, sat above the 0.55 cutoff and was dropped. The
-  mirror-image failure was seen in the same week — chunks passing the cutoff on
-  a query they did not answer. Both follow from a threshold calibrated on 5
-  concepts over 29 chunks; neither is fixed by moving the number.
-
-- **`TOP_K = 5` can spend slots on near-duplicate chunks.** Chunking overlaps by
-  design, so two retrieved chunks may share most of their text. Observed: five
-  results of which two were largely the same passage. Input tokens are paid for
-  all five, and `max_tokens` does not cap input.
+### Multi-turn
 
 - **The rewrite benchmark covers English only.** On four valid referent pairs
   the calibrated threshold held and the rewritten query landed closer than the
@@ -746,7 +970,6 @@ root, never as a bare script path.
   returned a statement lifted from the previous answer instead of a query. The
   failure class stands — retrieval degrades into a fluent answer, not into an
   error — but its size in Chinese is unknown.
-
 - **Ordinal referents are resolved by guessing.** "What about the second one?"
   was rewritten into one concrete method the model picked itself. The
   enumeration that defines "second" lives in the previous *answer*, and only
@@ -754,7 +977,6 @@ root, never as a bare script path.
   honestly — the rewritten query retrieved real chunks, but the original
   question had no "second one" to bind to in them. One observation; no fix
   scheduled before deployment.
-
 - **The rewrite alters wording beyond what the prompt allows.** Observed: a
   question containing a mis-typed term came back with the term corrected. The
   correction was right, and it is still an edit the instruction forbids, which
@@ -763,20 +985,13 @@ root, never as a bare script path.
   compressed into noun phrases, which measurably helps retrieval — see
   [Evaluation](#the-threshold-on-rewritten-queries) — and is still an edit the
   instruction forbids.
-
 - **The retrieval log does not survive a restart.** The `INFO` line carrying
   the original query, the rewritten form and the raw distances goes to the
   console handler only; `logs/errors.log` starts at `ERROR`. A crashed or
   restarted process takes the retrieval history with it. A file handler for
   `INFO` is deferred to the deploy phase.
 
-- **The "no answer in the corpus" path has executed once, unplanned.** During
-  the rewrite benchmark, generation received two above-threshold chunks and a
-  question they could not answer, and stated that the fragments contain no such
-  information instead of extrapolating. The refusal rule works in at least one
-  configuration. The designed test — a term from the corpus crossed with an
-  aspect the lectures do not cover — has still not run, and one execution says
-  little about the `<history>`/`<context>` separation in general.
+### Transcription
 
 - **ASR mangles domain terminology, and a larger model does not fix it.**
   On Chinese technical lecture audio, whisper substitutes homophones: the
@@ -817,6 +1032,8 @@ root, never as a bare script path.
   `medium+beam5`. `small+beam1` was never measured, so the contribution of beam
   search alone is unknown.
 
+### Invalidation and staleness
+
 - **Re-transcribing does not refresh the embeddings.** `embed` skips on the
   existence of rows for a `video_id`, and `video_id` carries no information
   about the ASR model or its parameters. Changing the transcription settings
@@ -824,53 +1041,11 @@ root, never as a bare script path.
   leaves the old vectors in place — a green log over a stale database. Until
   hash-based invalidation exists, `DELETE FROM embeddings WHERE video_id = '...'`
   before re-embedding.
-
 - **`chunk` invalidation is mtime-only.** An edit that preserves mtime is
   missed, and a change of chunking parameters is not detected at all — the
   transcripts did not change, so nothing looks stale.
 
-- **The threshold margin is thin.** 0.55 sits 0.029 above the worst measured
-  hit and 0.050 below the best measured noise. One slightly harder query would
-  push a valid hit past the cutoff.
-
-  Case sensitivity was then measured systematically across the 7 evaluation
-  concepts: lowercasing the English query shifts top-1 distance by at most
-  ±0.009, changes no outcome, and never displaces the top-1 chunk (top-3
-  membership shifts in 2 of 7). One query outside that set behaves differently:
-  "How does a counter work in Verilog" retrieves at 0.5170, and the same query
-  with `verilog` lowercased falls past the 0.55 cutoff — a shift of at least
-  +0.033, and the difference between an answer and "nothing found". The proper
-  noun is the only structural difference from the 7 concepts, which suggests
-  the effect scales with how unusual the casing is for that token rather than
-  with casing as such. One observation, not a measured effect.
-
-- **The evaluation set is small and partly non-blind.** 2 noise concepts across
-  3 videos in 1.5 domains. `管脚分配` and `红烧肉怎么做` were both run in earlier
-  sessions, so they are not blind; they are kept because they are the only
-  anchor to pre-existing measurements. `pin_assignment` also uses a bare noun
-  phrase in Chinese against full questions in Russian and English, which is the
-  same formulation drift the rest of the set was cleaned of.
-
-- **`TOP_K = 5` on a 29-chunk corpus returns a sixth of the database.** Ranking
-  at this scale is weakly informative; the numbers only become meaningful once
-  the corpus is substantially larger than `k`.
-
-- **Retrieval output cannot be judged by eye.** Results come back in Chinese.
-  The `expect_terms` check makes pass/fail mechanical, but diagnosing *why* a
-  query failed still requires an intermediary. This is the open blocker for
-  analysing false positives at scale.
-
-- **`embed` and `search` run on CPU.** The installed torch build has no CUDA
-  support for Pascal (GTX 1060, sm_61): PyTorch 2.8+ dropped it from the
-  cu128/cu129 wheels. Fixing this needs a cu126 build and possibly a torch
-  downgrade. Deferred — measured cost is ~1.4 s per chunk, acceptable at the
-  current corpus size.
-
-- **The threshold filter is duplicated.** The same list comprehension lives in
-  `main()` of `search.py` and in the endpoint. A threshold change requires
-  editing both. The fix is a `max_distance=None` parameter on `search()`, so the
-  filter has one home and the caller supplies the policy; deferred until a third
-  caller exists, because at two the indirection costs more than the duplication.
+### Concurrency
 
 - **Concurrency ceiling: ~40 requests, and the bottlenecks are serial.**
   FastAPI runs sync handlers in a 40-worker threadpool. Inside each request,
@@ -883,13 +1058,9 @@ root, never as a bare script path.
   Going async would fix only the waiting stages — and only with an async DB
   driver and `AsyncOpenAI`; `model.encode()` would still need an executor, or
   it blocks the event loop for everyone, which is *worse* than the threadpool.
-  At demo load (one user) none of this binds, so the sync design stays. The 
-  worst case is now bounded by DEEPSEEK_TIMEOUT (30 s) rather than by the SDK 
-  default of 600 s.
-
-- **The connection is opened at import and never reopened.** If PostgreSQL
-  restarts, or the connection drops, the API process must be restarted with it.
-
+  At demo load (one user) none of this binds, so the sync design stays. The
+  worst case is bounded by `DEEPSEEK_TIMEOUT` (30 s) rather than by the SDK
+  default of 600 s. None of these numbers come from a load test.
 - **A hanging LLM call holds a threadpool worker for the length of its
   timeout.** The DeepSeek call is synchronous, so a slow provider occupies its
   worker until `DEEPSEEK_TIMEOUT` (30 s) expires, and a stalled rewrite until
@@ -897,16 +1068,11 @@ root, never as a bare script path.
   600 s was not; combined with the single DB connection, a burst of slow
   requests still leaves the API unresponsive while the process is alive and the
   port is open.
-
-- **A conversation grows the prompt every turn.** `<history>` carries the last
-  two questions and the last answer in full, so input tokens per request rise
-  with the length of the thread. Nothing truncates by token count — the bound
-  is a turn count, which is a proxy, not a limit.
-
-- **Provider disconnection mid-stream is untested.** The three `openai`
-  exception classes are caught around `iter_answer_tokens()`, but the branch
-  has never been triggered against a real interruption; only the timeout path
-  was forced and observed.
+- **`embed` and `search` run on CPU.** The installed torch build has no CUDA
+  support for Pascal (GTX 1060, sm_61): PyTorch 2.8+ dropped it from the
+  cu128/cu129 wheels. Fixing this needs a cu126 build and possibly a torch
+  downgrade. Deferred — measured cost is ~1.4 s per chunk, acceptable at the
+  current corpus size.
 
 ## Rejected alternatives
 
@@ -926,9 +1092,12 @@ time it feels inconvenient.
 | Async rewriting | The rewrite is on the critical path before retrieval; concurrency buys nothing when nothing else can start. |
 | Open registration | Free registration caps no spend. Spend is capped by a per-IP rate limit and a global daily ceiling, which is a separate mechanism. |
 | Hosted CPU transcription | Tens of minutes per lecture — worse than not offering the feature. |
-| A tunnel to the local machine | The public link dies whenever the machine is off. |
-| Docker before the public deployment | One target host, one deploy. Containerisation is work that buys nothing until there is a second environment. |
+| A rented VPS for the API | It would still have no GPU, so transcription would stay on this machine and the tunnel with it. Paying a monthly bill to move only the cheap half of the system buys nothing. |
+| Cloudflare Tunnel | Built and abandoned: on this connection the session to the Cloudflare edge is terminated after two to three minutes, reproducibly, on QUIC and HTTP/2 alike. Tailscale Funnel held under the same conditions. |
+| A Next.js rewrite proxying the API | Every request would then arrive from Vercel's edge address, collapsing the per-IP limit into a second global one. |
+| Redis for the rate limit | One process, no state to share. A broker coordinates nothing here. |
+| Docker before the public deployment | One target host, one deploy. Containerisation is work that buys nothing until there is a second environment — and it would not have fixed the CUDA failure that cost the most time, since the driver stays on the host either way. |
 
 ---
 
-*Work in progress. Portfolio project — architecture and pipeline built stage by stage.*
+*Portfolio project — architecture and pipeline built stage by stage.*
