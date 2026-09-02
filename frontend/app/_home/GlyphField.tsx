@@ -7,12 +7,13 @@
    разрешается в китайский иероглиф: неразборчивая речь превращается в
    читаемый текст ровно там, куда смотришь.
 
-   Линза существует только пока курсор на поле. При уходе мыши она не
-   выключается щелчком, а угасает, и текст растворяется обратно в шум.
+   На мыши линза существует только пока курсор на поле. При уходе мыши
+   она не выключается щелчком, а угасает, и текст растворяется обратно
+   в шум. На тач-экране курсора нет, и линза ведётся сама — см. draw().
 
    Единственный client leaf на странице вместе с Pipeline. Всё, что
-   заводится в эффекте, в нём же и снимается: rAF, два слушателя на
-   canvas и один на window.
+   заводится в эффекте, в нём же и снимается: rAF, наблюдатель, два
+   слушателя на canvas и один на window.
    ───────────────────────────────────────────────────────────────────── */
 
 import { useEffect, useRef } from "react";
@@ -29,6 +30,11 @@ const BAND = 18; // полоса, где шум и текст меняются �
 const FOLLOW = 0.045; // насколько лениво линза тянется за курсором
 const HAN_MAX = 0.55; // потолок яркости иероглифов
 
+/* Высота вьюпорта на телефоне меняется, когда браузер прячет адресную
+   строку. Это не изменение раскладки, а прокрутка, и пересобирать поле
+   на неё не нужно. Порог отделяет одно от другого. */
+const H_NOISE = 120;
+
 export default function GlyphField() {
     const ref = useRef<HTMLCanvasElement>(null);
 
@@ -39,6 +45,11 @@ export default function GlyphField() {
         if (!ctx) return;
 
         const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+        /* Не (pointer: coarse) в одиночку: ноутбук с сенсорным экраном
+           сообщает fine по трекпаду. Пара с (hover: none) отсекает
+           именно устройства без курсора. */
+        const touch = window.matchMedia("(hover: none) and (pointer: coarse)").matches;
 
         /* next/font выдаёт гарнитуре сгенерированное имя, поэтому строковый
            литерал "IBM Plex Mono" в ctx.font промахнулся бы мимо неё и упал
@@ -55,8 +66,14 @@ export default function GlyphField() {
         let seeds: Float32Array = new Float32Array(0);
         let rowOffset: Uint16Array = new Uint16Array(0);
 
+        // Последняя раскладка, против которой сравнивается resize.
+        let lastW = -1;
+        let lastH = -1;
+
         function layout() {
             const box = canvas!.getBoundingClientRect();
+            lastW = box.width;
+            lastH = box.height;
             W = Math.max(200, box.width);
             H = Math.max(200, box.height);
             const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -92,11 +109,23 @@ export default function GlyphField() {
         }
 
         function draw(t: number) {
-            if (target) {
-                lens.x += (target.x - lens.x) * FOLLOW;
-                lens.y += (target.y - lens.y) * FOLLOW;
+            if (touch) {
+                /* pointermove на тач-экране приходит только во время
+                   перетаскивания пальцем, поэтому линза, привязанная к
+                   курсору, на телефоне не включается никогда и эффект не
+                   виден вообще. Здесь она ведётся сама по замкнутой
+                   траектории: два синуса с несоизмеримыми периодами, чтобы
+                   путь не повторялся коротким циклом. */
+                lens.x = W * (0.5 + 0.3 * Math.cos(t / 9000));
+                lens.y = H * (0.5 + 0.24 * Math.sin(t / 6600));
+                lensK += (1 - lensK) * 0.03;
+            } else {
+                if (target) {
+                    lens.x += (target.x - lens.x) * FOLLOW;
+                    lens.y += (target.y - lens.y) * FOLLOW;
+                }
+                lensK += ((target ? 1 : 0) - lensK) * 0.055;
             }
-            lensK += ((target ? 1 : 0) - lensK) * 0.055;
 
             ctx!.clearRect(0, 0, W, H);
 
@@ -174,9 +203,10 @@ export default function GlyphField() {
 
         let raf = 0;
         let alive = true;
+        let visible = true;
 
         function loop(t: number) {
-            if (!alive) return;
+            if (!alive || !visible) return;
             draw(t);
             raf = requestAnimationFrame(loop);
         }
@@ -188,15 +218,54 @@ export default function GlyphField() {
             lens.x = W / 2;
             lens.y = H / 2;
             if (reduce) {
+                // Под reduced motion кадр один. На тач-экране линза в нём
+                // должна быть уже включена, иначе поле остаётся чистым шумом
+                // и показывать нечего.
+                if (touch) lensK = 1;
                 draw(1300);
                 return;
             }
-            raf = requestAnimationFrame(loop);
+            if (visible) raf = requestAnimationFrame(loop);
         }
 
-        canvas.addEventListener("pointermove", onMove);
-        canvas.addEventListener("pointerleave", onLeave);
-        window.addEventListener("resize", start);
+        function onResize() {
+            const box = canvas!.getBoundingClientRect();
+            /* Мобильный браузер прячет адресную строку на прокрутке и сыплет
+               resize. start() пересоздаёт seeds и rowOffset, то есть поле
+               визуально перезапускается прямо во время скролла. Ширина —
+               настоящая смена раскладки, мелкое изменение высоты — нет. */
+            if (Math.abs(box.width - lastW) < 1 && Math.abs(box.height - lastH) < H_NOISE) {
+                return;
+            }
+            start();
+        }
+
+        /* Поле занимает экран только в герое. Пока оно за краем окна, кадры
+           рисовать не для кого, а на телефоне это заметная доля батареи. */
+        const io = new IntersectionObserver(
+            (entries) => {
+                const on = entries[0]?.isIntersecting ?? true;
+                if (on === visible) return;
+                visible = on;
+                if (!alive || reduce) return;
+                if (visible) {
+                    cancelAnimationFrame(raf);
+                    raf = requestAnimationFrame(loop);
+                } else {
+                    cancelAnimationFrame(raf);
+                }
+            },
+            { threshold: 0 },
+        );
+        io.observe(canvas);
+
+        // На тач-экране слушатели не нужны: линза ведётся сама, и
+        // перетаскивание пальцем сбивало бы её с траектории.
+        if (!touch) {
+            canvas.addEventListener("pointermove", onMove);
+            canvas.addEventListener("pointerleave", onLeave);
+        }
+        window.addEventListener("resize", onResize);
 
         start();
         // Промис может не разрешиться; первый кадр уже нарисован выше, так
@@ -209,9 +278,10 @@ export default function GlyphField() {
         return () => {
             alive = false;
             cancelAnimationFrame(raf);
+            io.disconnect();
             canvas.removeEventListener("pointermove", onMove);
             canvas.removeEventListener("pointerleave", onLeave);
-            window.removeEventListener("resize", start);
+            window.removeEventListener("resize", onResize);
         };
     }, []);
 

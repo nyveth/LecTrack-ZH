@@ -147,6 +147,12 @@
     border-color: var(--h-fg);
 }
 
+/* Существует только на узком экране. Объявлено после .h-bracket: та же
+   специфичность, побеждает порядок. */
+.h-narrow-only {
+    display: none;
+}
+
 /* ── герой ──────────────────────────────────────────────────────── */
 
 .h-hero {
@@ -438,32 +444,87 @@
 /* ── меньше 900: приколотого блока нет, всё в один столбец ──────── */
 
 @media (max-width: 900px) {
+
+    /* Кегль заголовка считается от ширины экрана. Десктопный
+       clamp(38px, 5.4vw, 78px) на 390px даёт нижнюю границу 38px:
+       vw-часть до неё не дотягивается, и заголовок ломается на четыре
+       строки вместо двух. */
+    .h-shell {
+        --h-t-display: clamp(32px, 9.6vw, 48px);
+        --h-t-lead: clamp(19px, 5vw, 24px);
+        -webkit-tap-highlight-color: transparent;
+    }
+
+    /* Шапка непрозрачна. Градиент с прозрачным низом работает скримом на
+       высокой десктопной шапке, а на короткой мобильной содержимое едет
+       сквозь него видимым — полоска стадий наезжает на вордмарк. */
+    .h-nav {
+        padding: 14px 18px;
+        background: #0b0c0c;
+    }
+
+    /* Текстовые ссылки уезжают целиком, а вместо них показывается кнопка
+       входа в приложение. Раньше здесь скрывался весь блок и вместе с ним
+       единственный путь в чат с телефона. */
+    .h-navlinks {
+        display: none;
+    }
+
+    .h-narrow-only {
+        display: inline-block;
+    }
+
+    .h-bracket {
+        padding: 10px 14px;
+    }
+
     .h-hero {
         grid-template-columns: 1fr;
-        gap: 16px;
-        padding: 10px 20px 30px;
+        gap: 0;
+        padding: 8px 18px 28px;
+        min-height: calc(100dvh - 60px);
+        /* Не stretch, как по умолчанию. В одну колонку строк становится
+           три, все auto, и свободная высота от min-height раздаётся между
+           ними поровну: между половинами заголовка вырастает провал под
+           90px, которого нет ни в gap, ни в margin. center собирает строки
+           вплотную и центрирует их как один блок. */
+        align-content: center;
     }
 
     .h-head,
     .h-head-r {
         text-align: left;
+        line-height: 1;
     }
 
     .h-stage {
         height: 42vh;
         order: 3;
-    }
-
-    .h-navlinks {
-        display: none;
+        margin-top: 22px;
     }
 
     .h-about {
-        padding: 48px 20px 34px;
+        padding: 44px 18px 32px;
+    }
+
+    /* 28ch и 56ch уже экрана: ограничение по мере строки на телефоне
+       только сужает и без того узкую колонку. */
+    .h-lead {
+        max-width: none;
+    }
+
+    .h-abody {
+        margin-top: 16px;
+        max-width: none;
+    }
+
+    .h-pipe {
+        margin-top: 26px;
+        gap: 8px 12px;
     }
 
     .h-pipeline {
-        padding: 48px 20px 60px;
+        padding: 44px 18px 56px;
     }
 
     .h-track {
@@ -478,7 +539,7 @@
 
     .h-plin {
         flex-direction: column;
-        gap: 24px;
+        gap: 22px;
     }
 
     .h-left {
@@ -492,16 +553,82 @@
 
     .h-sum {
         min-height: 0;
+        max-width: none;
     }
 
     .h-right {
         width: 100%;
     }
 
+    /* Высота плашки здесь не трогается: закрытым её ставит JS инлайном
+       из HEAD_H, и правило из таблицы стилей всё равно проиграет.
+       Меняются только внутренние отступы и кегли. */
+    .h-card {
+        padding: 0 16px;
+    }
+
+    .h-chead {
+        gap: 12px;
+    }
+
+    .h-ct {
+        font-size: 15px;
+    }
+
+    .h-card.is-open .h-ct {
+        font-size: 19px;
+    }
+
+    .h-csvg {
+        height: 100px;
+        padding: 4px 0 16px;
+    }
+
+    .h-cnote {
+        padding: 14px 0 20px;
+    }
+
+    .h-cnote p {
+        max-width: none;
+        line-height: 1.62;
+    }
+
     .h-tail {
         flex-direction: column;
         gap: 10px;
-        padding: 22px 20px 34px;
+        padding: 22px 18px 34px;
+    }
+}
+
+/* ── тач: :hover залипает после тапа ────────────────────────────────
+   На тач-экране браузер оставляет :hover на последнем нажатом элементе
+   до тапа по другому. Плашка после нажатия выглядит подсвеченной, и
+   активных оказывается две. Запрос по устройству, не по ширине: узкое
+   окно на десктопе мышь не теряет. */
+
+@media (hover: none) {
+    .h-card:hover {
+        border-color: var(--h-line);
+        background: transparent;
+    }
+
+    .h-card.is-open:hover {
+        border-color: rgba(255, 255, 255, 0.25);
+        background: rgba(255, 255, 255, 0.035);
+    }
+
+    .h-card:active {
+        background: rgba(255, 255, 255, 0.05);
+    }
+
+    .h-bracket:hover::before,
+    .h-bracket:hover::after {
+        border-color: var(--h-line-2);
+    }
+
+    .h-bracket:active::before,
+    .h-bracket:active::after {
+        border-color: var(--h-fg);
     }
 }
 

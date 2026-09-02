@@ -95,7 +95,7 @@ const STEPS: Step[] = [
 ];
 
 const HEAD_H = 80;
-const LINE = 0.36;
+const NARROW = "(max-width:900px)";
 
 export default function Pipeline() {
     const trackRef = useRef<HTMLDivElement>(null);
@@ -103,6 +103,7 @@ export default function Pipeline() {
     const hostRef = useRef<HTMLDivElement>(null);
     const leftRef = useRef<HTMLDivElement>(null);
     const cardRefs = useRef<(HTMLDivElement | null)[]>([]);
+    const mqRef = useRef<MediaQueryList | null>(null);
 
     const [current, setCurrent] = useState(0);
     const [sum, setSum] = useState(STEPS[0].sum);
@@ -110,6 +111,14 @@ export default function Pipeline() {
     const [revealed, setRevealed] = useState(-1); // индекс последней проявленной плашки
 
     const { scrollY } = useScroll();
+
+    /* matchMedia создаётся один раз и переспрашивается по .matches. Раньше
+       вызов стоял внутри pick, а pick срабатывает на каждое изменение
+       прокрутки — то есть объект MediaQueryList заводился по кадру. */
+    const isNarrow = useCallback(() => {
+        if (!mqRef.current) mqRef.current = window.matchMedia(NARROW);
+        return mqRef.current.matches;
+    }, []);
 
     /* Текст слева меняется не мгновенно: он гаснет, подменяется и
        возвращается, иначе подмена читается как дёрганье. */
@@ -149,9 +158,20 @@ export default function Pipeline() {
         left.style.transform = `translateY(${current * (HEAD_H + gap)}px)`;
     }, [current, applyHeights]);
 
+    /* Пересчёт только на смене ширины. Высота тела плашки зависит от того,
+       на сколько строк ложится текст, то есть от ширины и ни от чего
+       больше. А мобильный браузер меняет высоту окна на каждой прокрутке,
+       когда прячет адресную строку, и без этого условия каждая такая
+       прокрутка переписывала бы инлайновые height четырём плашкам. */
     useEffect(() => {
-        window.addEventListener("resize", applyHeights);
-        return () => window.removeEventListener("resize", applyHeights);
+        let lastW = window.innerWidth;
+        const onResize = () => {
+            if (window.innerWidth === lastW) return;
+            lastW = window.innerWidth;
+            applyHeights();
+        };
+        window.addEventListener("resize", onResize);
+        return () => window.removeEventListener("resize", onResize);
     }, [applyHeights]);
 
     /* Появление стопки. Плашки проявляются по очереди, задержка ставится
@@ -183,58 +203,53 @@ export default function Pipeline() {
     }, []);
 
     const pick = useCallback(() => {
+        /* На узком экране шаг выбирается только нажатием. Раньше его
+           выбирала и прокрутка, по линии в 36% экрана, и это ломало сам
+           тап: нажатие меняет высоты плашек, ранее раскрытая схлопывается,
+           всё под ней уезжает вверх на высоту её тела. bring() успевал
+           измерить шапку до перерисовки, прокрутка приходила на устаревшую
+           координату, и pick выбирал соседнюю плашку. Открывалась не та, по
+           которой нажали. */
+        if (isNarrow()) return;
+
         const track = trackRef.current;
         const stick = stickRef.current;
         if (!track || !stick) return;
-
-        if (window.matchMedia("(max-width:900px)").matches) {
-            // Приколотого блока нет, дорожки тоже: активен последний шаг, чья
-            // шапка прошла линию на 36% экрана.
-            const line = window.innerHeight * LINE;
-            let i = -1;
-            cardRefs.current.forEach((el, k) => {
-                const head = el?.querySelector<HTMLElement>(".h-chead");
-                if (head && head.getBoundingClientRect().top <= line) i = k;
-            });
-            if (i >= 0) setCurrent(i);
-            return;
-        }
 
         const usable = track.offsetHeight - stick.offsetHeight;
         if (usable <= 0) return;
         const p = -track.getBoundingClientRect().top / usable;
         const i = Math.floor(p * STEPS.length);
         setCurrent(Math.max(0, Math.min(STEPS.length - 1, i)));
-    }, []);
+    }, [isNarrow]);
 
     useMotionValueEvent(scrollY, "change", pick);
 
     /* Клик по плашке, до которой ещё не долистали, раскрывал её, а первое
        движение колеса выбор перебивало. Поэтому клик подводит шапку к той
-       же высоте, на которой прокрутка считает шаг активным. */
-    const bring = useCallback((i: number) => {
-        const track = trackRef.current;
-        const stick = stickRef.current;
-        if (!track || !stick) return;
+       же высоте, на которой прокрутка считает шаг активным.
 
-        if (window.matchMedia("(max-width:900px)").matches) {
-            const head = cardRefs.current[i]?.querySelector<HTMLElement>(".h-chead");
-            if (!head) return;
-            const y =
-                head.getBoundingClientRect().top + window.scrollY - window.innerHeight * 0.36;
-            window.scrollTo({ top: Math.max(0, y), behavior: "smooth" });
-            return;
-        }
+       На узком экране подводить нечего: прокрутка там шаг не выбирает,
+       плашка раскрывается на месте. */
+    const bring = useCallback(
+        (i: number) => {
+            if (isNarrow()) return;
 
-        // Середина окна, а не его край: у края округление прокрутки на пиксель
-        // роняло шаг на предыдущий, и клик по [03] отдавал [02].
-        const usable = track.offsetHeight - stick.offsetHeight;
-        const top = track.getBoundingClientRect().top + window.scrollY;
-        window.scrollTo({
-            top: top + (i + 0.5) * (usable / STEPS.length),
-            behavior: "smooth",
-        });
-    }, []);
+            const track = trackRef.current;
+            const stick = stickRef.current;
+            if (!track || !stick) return;
+
+            // Середина окна, а не его край: у края округление прокрутки на пиксель
+            // роняло шаг на предыдущий, и клик по [03] отдавал [02].
+            const usable = track.offsetHeight - stick.offsetHeight;
+            const top = track.getBoundingClientRect().top + window.scrollY;
+            window.scrollTo({
+                top: top + (i + 0.5) * (usable / STEPS.length),
+                behavior: "smooth",
+            });
+        },
+        [isNarrow],
+    );
 
     function activate(i: number) {
         setCurrent(i);
