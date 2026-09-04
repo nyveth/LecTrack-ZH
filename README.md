@@ -143,18 +143,25 @@ artifacts does **not** invalidate the embeddings — see
 
 ### Choosing the transcription model
 
-The whisper model name and its decoding parameters are **hardcoded in `main()`
-of `app/ingestion/transcribe.py`**, not exposed in `config.py` and not read from
-the environment. To change them, edit that function:
+The whisper model is built from three constants in `app/core/config.py`, read by
+both the CLI and the worker:
 
 ```python
-model = WhisperModel("small", device="cuda", compute_type="int8")
-segments, info = model.transcribe(path, beam_size=5, language="zh")
+WHISPER_MODEL_SIZE = "small"
+WHISPER_DEVICE = "cuda"
+WHISPER_COMPUTE_TYPE = "int8"
 ```
 
-`app/worker.py` builds its own model and does not read this one. Changing the
-CLI alone leaves uploads processed by the old settings — see
-[Known limitations](#known-limitations).
+The decoding parameters are not constants. They live inside `transcribe_file()`
+in `app/ingestion/transcribe.py`, which both entry points call, so there is one
+copy of them:
+
+```python
+segments, info = model.transcribe(path, beam_size=5, language="zh", vad_filter=True)
+```
+
+A running worker keeps the model it loaded at startup, so a constant change
+reaches it only after a restart - see [Known limitations](#known-limitations).
 
 Three of these values are deliberate and should not be raised without
 re-measuring:
@@ -853,16 +860,13 @@ root, never as a bare script path.
   `libcublas.so.12`. cuBLAS and cuDNN ship separately from the driver, and the
   probe that reports device capability does not load them, so the failure
   arrives at the first matrix multiply rather than at startup.
-- **The Whisper configuration exists in two places.** The CLI builds its model
-  in `app/ingestion/transcribe.py`; the worker builds its own in
-  `app/worker.py`. Editing one does not affect the other, and a running worker
-  keeps the model it loaded at startup regardless of either. Neither the
-  transcript nor the embedding rows record which model produced them.
-- **The worker path does not create its output directories.**
-  `transcribe_file()` and `chunk_file()` rely on `main()` having created
-  `data/transcripts` and `data/chunks`, and the worker calls them directly. On a
-  machine where those directories do not exist yet, an upload transcribes
-  successfully and then dies with `FileNotFoundError` on the write.
+- **Nothing records which model produced a transcript.** The three `WHISPER_*`
+  constants are read by both the CLI and the worker, so the two can no longer
+  drift from each other. What they still cannot do is say what was used: neither
+  the transcript JSON nor the embedding rows carry the model size or the compute
+  type, so a corpus built across a settings change is indistinguishable from a
+  consistent one. A running worker also keeps the model it loaded at startup, so
+  editing a constant changes nothing until it is restarted.
 - **The DeepSeek key blocks every stage, not just generation.** `config.py` is
   imported by `transcribe`, `chunk`, `embed` and `search` alike, and reads the
   key with `os.environ[...]` at import. A fresh clone cannot chunk a transcript
