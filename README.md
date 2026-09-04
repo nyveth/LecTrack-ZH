@@ -16,14 +16,11 @@ the machine that owns the GPU, and that machine is not kept running around the
 clock. Outside demo hours the page loads and search returns a connection error.
 This is a deliberate trade, not an outage — see [Deployment](#deployment).
 
-https://github.com/user-attachments/assets/330158a7-0056-46d7-b5bb-32151f0eee4a
+https://private-user-images.githubusercontent.com/55897970/645814603-39152815-9f2c-44a9-b1b5-d89bf8476973.mp4?jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmF3LmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImtleSI6ImtleTUiLCJleHAiOjE3ODg0NTIzNjQsIm5iZiI6MTc4ODQ1MjA2NCwicGF0aCI6Ii81NTg5Nzk3MC82NDU4MTQ2MDMtMzkxNTI4MTUtOWYyYy00NGE5LWIxYjUtZDg5YmY4NDc2OTczLm1wND9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUFLSUFWQ09EWUxTQTUzUFFLNFpBJTJGMjAyNjA5MDMlMkZ1cy1lYXN0LTElMkZzMyUyRmF3czRfcmVxdWVzdCZYLUFtei1EYXRlPTIwMjYwOTAzVDE2MTQyNFomWC1BbXotRXhwaXJlcz0zMDAmWC1BbXotU2lnbmF0dXJlPTNjNTAzYmExNTBhYjMxMWVlYjQ0YTE3NTU1NDIxMzc0MzkwMTIzN2Y1YzhmYjZhNmJmNWFkYTFmMWFmMWFmMzQmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0JnJlc3BvbnNlLWNvbnRlbnQtdHlwZT12aWRlbyUyRm1wNCJ9.YRmwEpWw_ql41wBi2Nn0ohyIO8wYxH0ot5G7JX1CVmk
 
 *A question in English against a Chinese lecture corpus: retrieval finds the
 relevant chunks, DeepSeek generates the answer, and the sources with timestamps
 let the user verify it against the video.*
-
-*The recording predates the current frontend — the design system was replaced
-on 12 Aug.*
 
 ## Stack
 
