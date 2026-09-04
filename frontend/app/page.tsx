@@ -47,21 +47,24 @@ export default function Home() {
         </nav>
 
         {/* Заголовок разорван на месте превращения: слева вход, справа
-            выход, машина посередине. */}
+            выход, машина посередине. Разрыв визуальный, поэтому заголовок
+            в разметке один: два h1 подряд читаются как две несвязанные
+            темы страницы. Видимые половины от читалки скрыты. */}
         <main className="h-hero">
-          <h1 className="h-head">
+          <h1 className="h-sr">Spoken Chinese made searchable</h1>
+          <div className="h-head" aria-hidden="true">
             Spoken
             <br />
             Chinese
-          </h1>
+          </div>
           <div className="h-stage">
             <GlyphField />
           </div>
-          <h1 className="h-head h-head-r">
+          <div className="h-head h-head-r" aria-hidden="true">
             made
             <br />
             searchable
-          </h1>
+          </div>
         </main>
 
         <section className="h-about" id="about">

@@ -177,44 +177,58 @@ export default function UploadPage() {
        только после того, как вернулся предыдущий. setInterval на медленной
        сети накапливает наложенные запросы, и очередь начинает мигать
        ответами, пришедшими не в том порядке. */
+        // Цикл живёт, только пока в очереди есть незавершённые строки.
+        // Иначе вкладка опрашивает пустоту до самого закрытия.
+    const hasOpen = jobs.some(isOpen);
+
     useEffect(() => {
-        if (!ready) return;
+        if (!ready || !hasOpen) return;
 
         let stopped = false;
         let timer: ReturnType<typeof setTimeout>;
 
         const tick = async () => {
             const open = live.current.filter(isOpen);
+            if (!open.length) return;
 
-            if (open.length) {
-                const seen = await Promise.all(
-                    open.map(async (j) => {
-                        try {
-                            const res = await fetch(`${API}/status/${j.jobId}`);
-                            if (!res.ok) return null;
-                            const d = (await res.json()) as {
-                                status: JobStatus;
-                                stage: JobStage | null;
-                                error: string | null;
+            const seen = await Promise.all(
+                open.map(async (j) => {
+                    try {
+                        const res = await fetch(`${API}/status/${j.jobId}`);
+                        // 404 не сбой сети, а окончательный ответ: такой задачи
+                        // на сервере нет и не появится. Без этой ветки строка
+                        // остаётся running и опрашивается бесконечно.
+                        if (res.status === 404) {
+                            return {
+                                key: j.key,
+                                status: "failed" as JobStatus,
+                                stage: null,
+                                error: "job not found on the server",
                             };
-                            return { key: j.key, ...d };
-                        } catch {
-                            // сеть моргнула или сервер лежит: строка остаётся
-                            // как была, следующий тик попробует снова
-                            return null;
                         }
-                    }),
-                );
+                        if (!res.ok) return null;
+                        const d = (await res.json()) as {
+                            status: JobStatus;
+                            stage: JobStage | null;
+                            error: string | null;
+                        };
+                        return { key: j.key, ...d };
+                    } catch {
+                        // сеть моргнула или сервер лежит: строка остаётся
+                        // как была, следующий тик попробует снова
+                        return null;
+                    }
+                }),
+            );
 
-                if (stopped) return;
+            if (stopped) return;
 
-                setJobs((prev) =>
-                    prev.map((j) => {
-                        const u = seen.find((s) => s?.key === j.key);
-                        return u ? { ...j, status: u.status, stage: u.stage, error: u.error } : j;
-                    }),
-                );
-            }
+            setJobs((prev) =>
+                prev.map((j) => {
+                    const u = seen.find((s) => s?.key === j.key);
+                    return u ? { ...j, status: u.status, stage: u.stage, error: u.error } : j;
+                }),
+            );
 
             if (!stopped) timer = setTimeout(tick, POLL_MS);
         };
@@ -224,7 +238,7 @@ export default function UploadPage() {
             stopped = true;
             clearTimeout(timer);
         };
-    }, [ready]);
+    }, [ready, hasOpen]);
 
     const dismiss = (key: string) => setJobs((prev) => prev.filter((j) => j.key !== key));
 
