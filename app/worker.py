@@ -18,6 +18,9 @@ from app.core.config import (
     POLL_INTERVAL,
     TARGET_TOKENS,
     TRANSCRIPTS_DIR,
+    WHISPER_COMPUTE_TYPE,
+    WHISPER_DEVICE,
+    WHISPER_MODEL_SIZE,
 )
 from app.core.log_config import setup_logging
 from app.ingestion.chunk import chunk_file
@@ -96,7 +99,9 @@ def process_job(
 def main() -> None:
     conn = psycopg.connect(DATABASE_URL, autocommit=True)
     register_vector(conn)
-    transcribe_model = WhisperModel("small", device="cuda", compute_type="int8")
+    transcribe_model = WhisperModel(
+        WHISPER_MODEL_SIZE, device=WHISPER_DEVICE, compute_type=WHISPER_COMPUTE_TYPE
+    )
     embed_model = SentenceTransformer(MODEL_NAME)
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 

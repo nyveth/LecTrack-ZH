@@ -6,7 +6,13 @@ from pathlib import Path
 
 from faster_whisper import WhisperModel
 
-from app.core.config import LECTURES_DIR, TRANSCRIPTS_DIR
+from app.core.config import (
+    LECTURES_DIR,
+    TRANSCRIPTS_DIR,
+    WHISPER_COMPUTE_TYPE,
+    WHISPER_DEVICE,
+    WHISPER_MODEL_SIZE,
+)
 from app.core.log_config import setup_logging
 from app.core.results import FileResult
 
@@ -72,8 +78,9 @@ def main() -> None:
         logger.warning("Lectures haven't been uploaded")
         sys.exit(0)
 
-    model_size = "small"
-    model = WhisperModel(model_size, device="cuda", compute_type="int8")
+    model = WhisperModel(
+        WHISPER_MODEL_SIZE, device=WHISPER_DEVICE, compute_type=WHISPER_COMPUTE_TYPE
+    )
 
     counts = Counter()
     failed = 0

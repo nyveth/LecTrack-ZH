@@ -23,6 +23,9 @@ OVERLAP_TOKENS = 64
 MODEL_NAME = "BAAI/bge-m3"
 TOP_K = 5
 BATCH_SIZE = 8
+WHISPER_MODEL_SIZE = "small"
+WHISPER_DEVICE = "cuda"
+WHISPER_COMPUTE_TYPE = "int8"
 
 # measured on a 29-chunk corpus: worst hit 0.5209, best noise 0.6000.
 # margin is 0.029 - a single new chunk can invalidate this.
