@@ -19,6 +19,7 @@ def transcribe_file(
     """Transcribe one lecture video to a JSON transcript."""
     file_name = video_path.stem
     out_file = transcripts_dir / f"{file_name}.json"
+    transcripts_dir.mkdir(parents=True, exist_ok=True)
 
     # the artifact on disk is the completion marker, not the log
     if out_file.exists():
@@ -70,8 +71,6 @@ def main() -> None:
     if not video_files:
         logger.warning("Lectures haven't been uploaded")
         sys.exit(0)
-
-    TRANSCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
 
     model_size = "small"
     model = WhisperModel(model_size, device="cuda", compute_type="int8")

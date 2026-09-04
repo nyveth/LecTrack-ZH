@@ -109,6 +109,8 @@ def chunk_file(
     """Split transcripts into overlapping token-bounded chunks."""
     final_path = chunks_dir / transcript_path.name
 
+    chunks_dir.mkdir(parents=True, exist_ok=True)
+
     # mtime-only invalidation: an edit preserving mtime is missed
     if final_path.exists():
         source_mtime = transcript_path.stat().st_mtime
@@ -143,8 +145,6 @@ def main() -> None:
     if not TRANSCRIPTS_DIR.exists():
         logger.error("Transcripts dir not found: %s", TRANSCRIPTS_DIR)
         sys.exit(1)
-
-    CHUNKS_DIR.mkdir(parents=True, exist_ok=True)
 
     # tokenizer loaded here, not in config.py: keeps config import side-effect free
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
