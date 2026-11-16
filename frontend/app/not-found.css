@@ -1,0 +1,258 @@
+/* ─────────────────────────────────────────────────────────────────────
+   404. Имена с префиксом nf-, значения из theme.css: своей палитры у
+   страницы нет. Иллюстрация монохромная, теми же тонкими линиями, что
+   схемы в пайплайне на главной.
+   ───────────────────────────────────────────────────────────────────── */
+
+.nf-page {
+    position: relative;
+    min-height: 100dvh;
+    display: grid;
+    place-items: center;
+    padding: 32px 20px;
+    overflow: hidden;
+}
+
+/* Та же сетка, что за героем главной, только слабее. */
+.nf-grid {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+        repeating-linear-gradient(to right, var(--line) 0 1px, transparent 1px 96px),
+        repeating-linear-gradient(to bottom, var(--line) 0 1px, transparent 1px 96px);
+    opacity: 0.5;
+    mask-image: radial-gradient(60% 55% at 50% 40%, #000 20%, transparent 100%);
+    -webkit-mask-image: radial-gradient(60% 55% at 50% 40%, #000 20%, transparent 100%);
+}
+
+.nf-main {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    max-width: 460px;
+    text-align: center;
+}
+
+/* ── иллюстрация ────────────────────────────────────────────────── */
+
+.nf-art {
+    width: min(340px, 86vw);
+    height: auto;
+    margin-bottom: 18px;
+    color: var(--text);
+    overflow: visible;
+}
+
+/* Заливка грунтом: фигуры перекрывают друг друга, а не просвечивают. */
+.nf-fill {
+    fill: var(--bg);
+}
+
+.nf-board {
+    fill: var(--card-lift);
+}
+
+.nf-hair {
+    fill: var(--text-muted);
+    stroke: var(--text-muted);
+}
+
+.nf-eye,
+.nf-via {
+    fill: currentColor;
+    stroke: none;
+}
+
+.nf-dim {
+    stroke: var(--text-muted);
+}
+
+.nf-bubble {
+    fill: var(--panel);
+    stroke: var(--text-muted);
+}
+
+.nf-think {
+    fill: var(--text-soft);
+    stroke: none;
+    font-family: var(--font-noto-sc), sans-serif;
+    font-size: 13px;
+}
+
+.nf-silk {
+    fill: var(--text-soft);
+    stroke: none;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 1px;
+}
+
+/* Половины чуть разведены в стороны, как будто их только что
+   разломили и ещё держат. Ось поворота — у кистей на внешних краях. */
+.nf-half-l {
+    transform-box: view-box;
+    transform-origin: 103px 180px;
+    animation: nf-wobble-l 4.8s ease-in-out infinite;
+}
+
+.nf-half-r {
+    transform-box: view-box;
+    transform-origin: 217px 180px;
+    animation: nf-wobble-r 4.8s ease-in-out infinite;
+}
+
+@keyframes nf-wobble-l {
+    0%, 100% { transform: rotate(-7deg); }
+    50% { transform: rotate(-9deg); }
+}
+
+@keyframes nf-wobble-r {
+    0%, 100% { transform: rotate(7deg); }
+    50% { transform: rotate(9deg); }
+}
+
+/* Искра вспыхивает коротко и редко: постоянное мигание читалось бы
+   как индикатор загрузки. */
+.nf-spark {
+    stroke: var(--text);
+    opacity: 0;
+    animation: nf-spark 3.2s steps(1) infinite;
+}
+
+@keyframes nf-spark {
+    0%, 100% { opacity: 0; }
+    6% { opacity: 1; }
+    9% { opacity: 0.2; }
+    12% { opacity: 1; }
+    16% { opacity: 0; }
+}
+
+.nf-smoke {
+    stroke: var(--text-muted);
+    opacity: 0;
+    animation: nf-smoke 3.2s ease-out infinite;
+}
+
+@keyframes nf-smoke {
+    0%, 12% { opacity: 0; transform: translateY(4px); }
+    30% { opacity: 0.7; }
+    100% { opacity: 0; transform: translateY(-14px); }
+}
+
+.nf-tear {
+    fill: var(--text-soft);
+    stroke: none;
+    animation: nf-tear 2.6s ease-in infinite;
+}
+
+@keyframes nf-tear {
+    0%, 20% { opacity: 0; transform: translateY(0); }
+    35% { opacity: 1; }
+    85% { opacity: 1; transform: translateY(10px); }
+    100% { opacity: 0; transform: translateY(14px); }
+}
+
+/* ── текст ──────────────────────────────────────────────────────── */
+
+.nf-code {
+    margin: 0 0 10px;
+    font-family: var(--font-mono);
+    font-size: var(--t-micro);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.nf-title {
+    margin: 0;
+    font-size: var(--t-display);
+    font-weight: 600;
+    line-height: 1.15;
+    letter-spacing: -0.6px;
+}
+
+.nf-zh {
+    margin: 10px 0 0;
+    font-size: 15px;
+    letter-spacing: 0.2em;
+    color: var(--text-soft);
+}
+
+.nf-body {
+    margin: 14px 0 0;
+    max-width: 40ch;
+    font-size: var(--t-body);
+    line-height: 1.6;
+    color: var(--text-soft);
+}
+
+.nf-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 26px;
+}
+
+.nf-btn {
+    display: inline-flex;
+    align-items: center;
+    height: 36px;
+    padding: 0 16px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-md);
+    font-size: var(--t-label);
+    font-weight: 500;
+    color: var(--text);
+    text-decoration: none;
+    transition:
+        background var(--dur),
+        border-color var(--dur),
+        transform var(--dur) var(--ease);
+}
+
+.nf-btn:hover {
+    background: var(--card-lift);
+    border-color: rgba(236, 237, 236, 0.3);
+}
+
+.nf-btn-primary {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--on-accent);
+}
+
+.nf-btn-primary:hover {
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
+}
+
+.nf-btn:active {
+    transform: scale(0.97);
+}
+
+@media (max-width: 640px) {
+    .nf-title {
+        font-size: 24px;
+    }
+}
+
+/* theme.css уже гасит длительности под reduced motion, но анимации,
+   стартующие с opacity 0, тогда застыли бы невидимыми. Здесь их
+   останавливают в осмысленном кадре. */
+@media (prefers-reduced-motion: reduce) {
+    .nf-half-l,
+    .nf-half-r,
+    .nf-spark,
+    .nf-smoke,
+    .nf-tear {
+        animation: none;
+    }
+
+    .nf-half-l { transform: rotate(-7deg); }
+    .nf-half-r { transform: rotate(7deg); }
+    .nf-tear { opacity: 1; }
+}
