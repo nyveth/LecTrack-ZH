@@ -164,6 +164,12 @@
     background: var(--card-lift);
 }
 
+/* Дети зоны не ловят перетаскивание. Иначе переход курсора с зоны на
+   иконку или подпись даёт dragleave на самой зоне, и рамка мигает. */
+.drop > * {
+    pointer-events: none;
+}
+
 .drop input[type="file"] {
     display: none;
 }
@@ -254,6 +260,10 @@
     color: var(--text-muted);
 }
 
+.job-main {
+    min-width: 0;
+}
+
 .job-name {
     font-size: var(--t-section);
     font-weight: 500;
@@ -265,6 +275,7 @@
 
 .job-sub {
     margin-top: 5px;
+    overflow-wrap: anywhere;
     font-family: var(--font-mono);
     font-size: var(--t-micro);
     letter-spacing: 0.05em;
@@ -364,7 +375,7 @@
         height: 36px;
     }
 
-    .job-name {
+    .job-main {
         grid-area: n;
     }
 

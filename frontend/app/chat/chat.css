@@ -182,11 +182,28 @@
         left: 0;
         transform: translateX(-100%);
         box-shadow: var(--shadow-lg);
-        transition: transform var(--dur) var(--ease);
+        /* visibility, а не только сдвиг: уехавшая за край панель иначе
+           остаётся в порядке Tab, и фокус с клавиатуры уходит в невидимые
+           кнопки. Скрывается после конца сдвига, появляется сразу. */
+        visibility: hidden;
+        transition:
+            transform var(--dur) var(--ease),
+            visibility 0s linear var(--dur);
     }
 
     .chat-rail[data-open="true"] {
         transform: translateX(0);
+        visibility: visible;
+        transition:
+            transform var(--dur) var(--ease),
+            visibility 0s;
+    }
+
+    /* iOS Safari увеличивает страницу при фокусе на поле с кеглем меньше
+       16px и не возвращает масштаб обратно. */
+    .composer textarea,
+    .thread-input {
+        font-size: 16px;
     }
 
     /* Кнопка, а не div: закрыть панель обязано быть достижимо с клавиатуры. */

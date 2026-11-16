@@ -48,6 +48,15 @@ const STAGE_LABEL: Record<JobStage, string> = {
     embed: "embedding",
 };
 
+/* crypto.randomUUID есть только в защищённом контексте. Страница,
+   открытая с телефона по http://<ip-в-локалке>, без запасного пути
+   падала бы на первом же выбранном файле. */
+function uid() {
+    return typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
 function mb(bytes: number) {
     return `${Math.max(1, Math.round(bytes / 1024 / 1024))} MB`;
 }
@@ -81,7 +90,9 @@ export default function UploadPage() {
     // Опрос читает список отсюда, а не из замыкания: иначе цикл нужно
     // пересоздавать на каждое изменение очереди, а он асинхронный.
     const live = useRef<Job[]>([]);
-    live.current = jobs;
+    useEffect(() => {
+        live.current = jobs;
+    }, [jobs]);
 
     // localStorage читается после монтирования: на сервере его нет, и
     // чтение в инициализаторе useState развалило бы гидратацию
@@ -109,7 +120,11 @@ export default function UploadPage() {
 
     useEffect(() => {
         if (!ready) return;
-        localStorage.setItem(STORE, JSON.stringify(jobs));
+        try {
+            localStorage.setItem(STORE, JSON.stringify(jobs));
+        } catch {
+            // переполнение или приватный режим: очередь живёт в памяти
+        }
     }, [jobs, ready]);
 
     const patch = useCallback((key: string, next: Partial<Job>) => {
@@ -148,7 +163,7 @@ export default function UploadPage() {
             if (!files?.length) return;
 
             for (const file of Array.from(files)) {
-                const key = crypto.randomUUID();
+                const key = uid();
                 const ok = file.name.toLowerCase().endsWith(ACCEPT);
 
                 setJobs((prev) => [
@@ -323,7 +338,10 @@ export default function UploadPage() {
                                 )}
                             </div>
 
-                            <div>
+                            {/* min-width: 0 в .job-main: без него ячейка сетки не
+                                уже своего текста, и длинное имя файла раздвигает
+                                страницу вместо многоточия. */}
+                            <div className="job-main">
                                 <div className="job-name" title={job.name}>
                                     {job.name}
                                 </div>

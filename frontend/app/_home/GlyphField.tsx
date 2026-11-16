@@ -57,7 +57,10 @@ export default function GlyphField() {
            ставит layout.tsx; ctx.font принимает её значение как есть. */
         const css = getComputedStyle(document.documentElement);
         const MONO = css.getPropertyValue("--font-mono").trim() || "monospace";
-        const CJK = css.getPropertyValue("--font-cjk").trim() || "sans-serif";
+        // --font-noto-sc ставит next/font в layout.tsx. Раньше здесь читалась
+        // --font-cjk, которой нигде нет, и иероглифы рисовались системным
+        // шрифтом, а на машине без CJK-шрифтов квадратиками.
+        const CJK = css.getPropertyValue("--font-noto-sc").trim() || "sans-serif";
 
         let cols = 0;
         let rows = 0;

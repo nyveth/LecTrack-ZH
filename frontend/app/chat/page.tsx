@@ -99,6 +99,20 @@ type Frame = {
   data: Record<string, unknown>;
 };
 
+/* crypto.randomUUID и navigator.clipboard есть только в защищённом
+   контексте. На https и localhost они на месте, а страница, открытая с
+   телефона по http://<ip-в-локалке>, падала бы на первом же вопросе. */
+function uid(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+function copyText(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
+  return Promise.reject(new Error("clipboard unavailable"));
+}
+
 function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
@@ -283,6 +297,9 @@ export default function ChatPage() {
   const reduce = useReducedMotion();
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Стоит ли поток у нижнего края. Пока пользователь читает выше,
+  // приходящие токены не должны утаскивать его вниз.
+  const stuckRef = useRef(true);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // localStorage does not exist during server rendering, so it cannot be
@@ -317,11 +334,33 @@ export default function ChatPage() {
   const turns = active?.turns ?? [];
   const groups = groupConversations(conversations);
 
-  // Follow the bottom as tokens arrive.
+  // A new question or another chat is a deliberate jump: always go to the
+  // bottom and re-attach. Not when liveQuestion is cleared at the end of
+  // a stream — that would yank a reader who scrolled up after all.
+  function jumpToBottom() {
+    const el = scrollRef.current;
+    if (!el) return;
+    stuckRef.current = true;
+    el.scrollTop = el.scrollHeight;
+  }
+  useEffect(jumpToBottom, [activeId]);
+  useEffect(() => {
+    if (liveQuestion) jumpToBottom();
+  }, [liveQuestion]);
+
+  // Tokens and the finished turn follow the bottom only while the user is
+  // already there. Scrolling up to reread an earlier answer used to be
+  // impossible mid-stream: every token yanked the view back down.
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [turns.length, liveAnswer, liveQuestion]);
+    if (el && stuckRef.current) el.scrollTop = el.scrollHeight;
+  }, [turns.length, liveAnswer]);
+
+  function onStreamScroll() {
+    const el = scrollRef.current;
+    if (!el) return;
+    stuckRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  }
 
   // "Copied" is a transient label, not a state of the chunk. The timer is
   // cleared on unmount and on the next copy, so a fast second click never
@@ -424,7 +463,7 @@ export default function ChatPage() {
     // setActiveId does not update `activeId` inside this call.
     let id = activeId;
     if (!id) {
-      id = crypto.randomUUID();
+      id = uid();
       const fresh: Conversation = {
         id,
         title: question,
@@ -763,7 +802,7 @@ export default function ChatPage() {
           </div>
         </header>
 
-        <div ref={scrollRef} className="chat-stream">
+        <div ref={scrollRef} className="chat-stream" onScroll={onStreamScroll}>
           <div
             className="mx-auto flex flex-col px-6"
             style={{ maxWidth: "720px", gap: "26px" }}
@@ -904,16 +943,19 @@ export default function ChatPage() {
                                         gap: "5px",
                                       }}
                                       onClick={() =>
-                                        navigator.clipboard.writeText(s.text).then(
+                                        copyText(s.text).then(
                                           () => setCopied(key),
-                                          () => setCopied("failed"),
+                                          // Keyed like success, so the failure
+                                          // shows on the button that was
+                                          // pressed, not on every open card.
+                                          () => setCopied(`failed:${key}`),
                                         )
                                       }
                                     >
                                       <Copy size={12} />
                                       {copied === key
                                         ? "Copied"
-                                        : copied === "failed"
+                                        : copied === `failed:${key}`
                                           ? "Copy failed"
                                           : "Copy"}
                                     </button>

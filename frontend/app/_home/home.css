@@ -29,7 +29,7 @@
     position: relative;
     z-index: 1;
     color: var(--h-fg);
-    font-family: var(--font-display), system-ui, sans-serif;
+    font-family: var(--font-body, system-ui, sans-serif);
 }
 
 /* Сетка фона. Тем же весом, что штрихи марки. */
@@ -273,12 +273,17 @@
     height: calc(100vh + 4 * var(--h-seg));
 }
 
+/* Сверху отступ на высоту липкой шапки: приколотый блок стоит под ней,
+   а не за ней. safe center: если раскрытая стопка выше окна, она
+   прижимается к верху, а не вылезает поровну за оба края, и первая
+   плашка не уезжает под шапку. */
 .h-stick {
     position: sticky;
     top: 0;
     height: 100vh;
+    padding-top: 64px;
     display: flex;
-    align-items: center;
+    align-items: safe center;
 }
 
 .h-plin {
@@ -431,6 +436,19 @@
     color: var(--h-fg-2);
 }
 
+/* Невысокий экран ноутбука: раскрытая плашка с иллюстрацией в 150px в
+   окно под шапкой не помещается. Ужимается картинка, а не текст. */
+@media (min-width: 901px) and (max-height: 760px) {
+    .h-csvg {
+        height: 96px;
+        padding: 6px 0 14px;
+    }
+
+    .h-cnote {
+        padding: 14px 0 18px;
+    }
+}
+
 /* ── подвал ─────────────────────────────────────────────────────── */
 
 .h-tail {
@@ -548,6 +566,7 @@
     .h-stick {
         position: static;
         height: auto;
+        padding-top: 0;
         display: block;
     }
 

@@ -274,6 +274,7 @@ body {
     line-height: 1.6;
     color: var(--text-soft);
     white-space: pre-wrap;
+    overflow-wrap: anywhere;
     /* Явно, потому что cursor:pointer у родителя делает текст на вид
      невыделяемым, даже когда он выделяется. */
     cursor: text;
@@ -429,6 +430,15 @@ body {
     opacity: 1;
 }
 
+/* На тач-экране наведения нет, и кнопка, видимая только по :hover, не
+   видна никогда: переименовать, закрепить или удалить чат с телефона
+   было нельзя. Там она видна всегда. */
+@media (hover: none) {
+    .thread-x {
+        opacity: 1;
+    }
+}
+
 .thread-pin {
     color: var(--accent);
     font-size: 9px;
@@ -504,6 +514,9 @@ body {
      для этого не нужен. */
     border-radius: 18px 18px 4px 18px;
     white-space: pre-wrap;
+    /* Ссылка или длинный идентификатор без пробелов иначе уходит за край
+       пузыря, а на телефоне и за край экрана. */
+    overflow-wrap: anywhere;
 }
 
 .bubble-bot {
@@ -511,6 +524,7 @@ body {
     line-height: 1.62;
     color: var(--text);
     white-space: pre-wrap;
+    overflow-wrap: anywhere;
 }
 
 .caret {

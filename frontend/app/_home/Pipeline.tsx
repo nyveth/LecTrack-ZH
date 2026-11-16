@@ -96,6 +96,8 @@ const STEPS: Step[] = [
 
 const HEAD_H = 80;
 const NARROW = "(max-width:900px)";
+// Тот же порог, что в home.css: на невысоком экране тело плашки ниже.
+const SHORT = "(min-width:901px) and (max-height:760px)";
 
 export default function Pipeline() {
     const trackRef = useRef<HTMLDivElement>(null);
@@ -171,7 +173,16 @@ export default function Pipeline() {
             applyHeights();
         };
         window.addEventListener("resize", onResize);
-        return () => window.removeEventListener("resize", onResize);
+
+        // Исключение из правила выше: высота окна, пересекающая порог SHORT,
+        // меняет высоту иллюстрации, и тело плашки надо перемерить.
+        const short = window.matchMedia(SHORT);
+        short.addEventListener("change", applyHeights);
+
+        return () => {
+            window.removeEventListener("resize", onResize);
+            short.removeEventListener("change", applyHeights);
+        };
     }, [applyHeights]);
 
     /* Появление стопки. Плашки проявляются по очереди, задержка ставится
